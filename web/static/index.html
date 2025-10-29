@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTSP to WebRTC Media Server</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>RTSP to WebRTC Media Server</h1>
+            <p class="subtitle">Real-time video streaming viewer</p>
+        </header>
+
+        <main>
+            <div class="video-container">
+                <video id="videoPlayer" autoplay playsinline controls></video>
+                <div class="video-overlay">
+                    <div id="connectionStatus" class="status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Disconnected</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="connectBtn" class="btn btn-primary">Connect</button>
+                <button id="disconnectBtn" class="btn btn-secondary" disabled>Disconnect</button>
+            </div>
+
+            <div class="stats">
+                <h2>Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">Connection State:</span>
+                        <span id="statConnectionState" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">ICE State:</span>
+                        <span id="statIceState" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Signaling State:</span>
+                        <span id="statSignalingState" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Bitrate:</span>
+                        <span id="statBitrate" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Packets Received:</span>
+                        <span id="statPackets" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Bytes Received:</span>
+                        <span id="statBytes" class="stat-value">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="logs">
+                <h2>Logs</h2>
+                <div id="logContainer" class="log-container"></div>
+                <button id="clearLogsBtn" class="btn btn-small">Clear Logs</button>
+            </div>
+        </main>
+
+        <footer>
+            <p>RTSP to WebRTC Media Server v0.1.0</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

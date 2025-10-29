@@ -1,0 +1,85 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE - VSCode
+.vscode/
+*.code-workspace
+
+# IDE - IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# IDE - GoLand
+.idea/
+*.iml
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# Config overrides
+configs/config.local.yaml
+configs/*.local.yaml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# Node modules (for web frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Media files (for testing)
+*.mp4
+*.avi
+*.mkv
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.dockerignore
+
+# Air (hot reload tool)
+tmp/

@@ -1,0 +1,102 @@
+# RTSP to WebRTC Media Server Configuration
+
+server:
+  # HTTP API 서버 설정
+  http_port: 8080
+  # WebSocket 시그널링 포트
+  ws_port: 8081
+  # 프로덕션 모드 (false: 개발 모드)
+  production: false
+
+rtsp:
+  # 테스트 RTSP 스트림
+  test_stream:
+    url: "rtsp://admin:live0416@192.168.4.121:554/Streaming/Channels/102"
+    name: "test-camera-1"
+
+  # RTSP 클라이언트 설정
+  client:
+    # 연결 타임아웃 (초)
+    timeout: 10
+    # 재연결 시도 횟수
+    retry_count: 3
+    # 재연결 대기 시간 (초)
+    retry_delay: 5
+    # TCP 전송 사용 (true) 또는 UDP (false)
+    tcp_transport: true
+
+  # 스트림 풀 설정
+  pool:
+    # 최대 동시 스트림 수
+    max_streams: 100
+    # 스트림 헬스 체크 간격 (초)
+    health_check_interval: 30
+
+webrtc:
+  # ICE 서버 설정
+  ice_servers:
+    - urls:
+      - "stun:stun.l.google.com:19302"
+      - "stun:stun1.l.google.com:19302"
+
+  # WebRTC 설정
+  settings:
+    # 최대 동시 피어 연결 수
+    max_peers: 1000
+    # 비디오 코덱 우선순위
+    video_codecs:
+      - "H264"
+      - "VP8"
+      - "VP9"
+    # 오디오 코덱 우선순위
+    audio_codecs:
+      - "OPUS"
+      - "PCMU"
+      - "PCMA"
+
+media:
+  # 미디어 버퍼 설정
+  buffer:
+    # 비디오 버퍼 크기 (패킷 수)
+    video_buffer_size: 500
+    # 오디오 버퍼 크기 (패킷 수)
+    audio_buffer_size: 200
+
+  # 코덱 설정
+  codec:
+    # H264 프로파일
+    h264_profile: "baseline"
+    # 비트레이트 제한 (kbps, 0 = 제한 없음)
+    max_bitrate: 0
+
+logging:
+  # 로그 레벨: debug, info, warn, error
+  level: "info"
+  # 로그 출력: console, file, both
+  output: "both"
+  # 파일 로그 경로 (output이 file 또는 both일 때)
+  file_path: "logs/media-server.log"
+  # 로그 파일 최대 크기 (MB)
+  max_size: 100
+  # 로그 파일 최대 개수
+  max_backups: 3
+  # 로그 파일 보관 기간 (일)
+  max_age: 7
+
+metrics:
+  # Prometheus 메트릭 활성화
+  enabled: true
+  # 메트릭 엔드포인트 포트
+  port: 9090
+  # 메트릭 수집 간격 (초)
+  interval: 10
+
+performance:
+  # 고루틴 풀 크기
+  worker_pool_size: 100
+  # 읽기 버퍼 크기 (bytes)
+  read_buffer_size: 4096
+  # 쓰기 버퍼 크기 (bytes)
+  write_buffer_size: 4096
+  # GC 퍼센트 (기본값 100)
+  gc_percent: 50
