@@ -1,7 +1,7 @@
 # Multi-stage build for minimal image size
 
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # 빌드에 필요한 패키지 설치
 RUN apk add --no-cache git make
