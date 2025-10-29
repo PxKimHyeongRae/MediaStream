@@ -739,6 +739,21 @@ async function connectCamera(streamId) {
 ### 내부 문서
 - [README.md](./README.md) - 프로젝트 소개 및 사용 가이드
 - [configs/config.yaml](./configs/config.yaml) - 설정 파일 예시
+- [CLAUDE.md](./CLAUDE.md) - 프로젝트 살아있는 문서 (현재 파일)
+
+### Skills (재사용 가능한 지식)
+- [.claude/skills/rtsp-webrtc-streaming.md](./.claude/skills/rtsp-webrtc-streaming.md) - RTSP to WebRTC 스트리밍 시스템 종합 가이드
+- [.claude/skills/README.md](./.claude/skills/README.md) - Skill 관리 가이드
+
+**Skills vs CLAUDE.md**:
+- **CLAUDE.md**: 현재 프로젝트(cctv3)의 구체적인 상태, 의사결정, 진행 상황
+- **Skills**: 일반화된 패턴과 재사용 가능한 지식, 다른 프로젝트에도 적용 가능
+
+**Skills 활용**:
+```
+"RTSP to WebRTC 시스템을 새로 만들어야 해.
+.claude/skills/rtsp-webrtc-streaming.md를 참고해서 설계해줘."
+```
 
 ### 외부 리소스
 
@@ -803,6 +818,42 @@ async function connectCamera(streamId) {
 
 - **Explore Agent**: 코드베이스 탐색 시 사용
 - **Plan Agent**: 복잡한 기능 설계 시 사용
+
+### Skills 관리 (재사용 가능한 지식)
+
+**Skills는 CLAUDE.md처럼 Living Document입니다.**
+
+#### Skills 생성 (Create)
+```
+"새로운 패턴이나 해결책을 발견했어.
+.claude/skills/에 [skill-name].md로 저장하고
+README.md에도 추가해줘."
+```
+
+#### Skills 읽기 (Read)
+```
+"RTSP to WebRTC 관련 패턴을 참고하고 싶어.
+.claude/skills/rtsp-webrtc-streaming.md를 보여줘."
+```
+
+#### Skills 업데이트 (Update)
+```
+"ICE 연결 처리 패턴이 개선되었어.
+rtsp-webrtc-streaming.md의 ICE 섹션을 업데이트하고
+Maintenance Log에도 기록해줘."
+```
+
+#### Skills 삭제 (Delete)
+```
+"[skill-name].md가 더 이상 유용하지 않아.
+삭제하고 README.md에서도 제거해줘."
+```
+
+**Best Practice**:
+- 프로젝트에서 중요한 패턴 발견 시 즉시 Skill로 저장
+- 버그 해결 시 트러블슈팅 섹션에 추가
+- 다른 프로젝트에도 적용 가능하도록 일반화
+- CLAUDE.md는 현재 프로젝트, Skills는 재사용 가능한 지식
 
 ---
 
