@@ -17,9 +17,12 @@ type Server struct {
 	port       int
 
 	// 핸들러
-	healthHandler      func() map[string]interface{}
-	streamsHandler     func() []map[string]interface{}
-	websocketHandler   func(http.ResponseWriter, *http.Request)
+	healthHandler       func() map[string]interface{}
+	streamsHandler      func() []map[string]interface{}
+	streamInfoHandler   func(streamID string) (map[string]interface{}, error)
+	startStreamHandler  func(streamID string) error
+	stopStreamHandler   func(streamID string) error
+	websocketHandler    func(http.ResponseWriter, *http.Request)
 }
 
 // ServerConfig는 API 서버 설정
@@ -29,6 +32,9 @@ type ServerConfig struct {
 	Logger             *zap.Logger
 	HealthHandler      func() map[string]interface{}
 	StreamsHandler     func() []map[string]interface{}
+	StreamInfoHandler  func(streamID string) (map[string]interface{}, error)
+	StartStreamHandler func(streamID string) error
+	StopStreamHandler  func(streamID string) error
 	WebSocketHandler   func(http.ResponseWriter, *http.Request)
 }
 
@@ -46,12 +52,15 @@ func NewServer(config ServerConfig) *Server {
 	router.Use(loggerMiddleware(config.Logger))
 
 	server := &Server{
-		logger:           config.Logger,
-		router:           router,
-		port:             config.Port,
-		healthHandler:    config.HealthHandler,
-		streamsHandler:   config.StreamsHandler,
-		websocketHandler: config.WebSocketHandler,
+		logger:            config.Logger,
+		router:            router,
+		port:              config.Port,
+		healthHandler:     config.HealthHandler,
+		streamsHandler:    config.StreamsHandler,
+		streamInfoHandler: config.StreamInfoHandler,
+		startStreamHandler: config.StartStreamHandler,
+		stopStreamHandler: config.StopStreamHandler,
+		websocketHandler:  config.WebSocketHandler,
 	}
 
 	server.setupRoutes()
@@ -68,6 +77,9 @@ func (s *Server) setupRoutes() {
 	v1 := s.router.Group("/api/v1")
 	{
 		v1.GET("/streams", s.handleStreams)
+		v1.GET("/streams/:id", s.handleStreamInfo)
+		v1.POST("/streams/:id/start", s.handleStartStream)
+		v1.DELETE("/streams/:id", s.handleStopStream)
 		v1.GET("/stats", s.handleStats)
 	}
 
@@ -143,6 +155,76 @@ func (s *Server) handleStreams(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"streams": streams,
+	})
+}
+
+// handleStreamInfo는 특정 스트림 정보를 반환합니다
+func (s *Server) handleStreamInfo(c *gin.Context) {
+	streamID := c.Param("id")
+
+	if s.streamInfoHandler == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error": "stream info handler not configured",
+		})
+		return
+	}
+
+	info, err := s.streamInfoHandler(streamID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, info)
+}
+
+// handleStartStream은 온디맨드 스트림을 시작합니다
+func (s *Server) handleStartStream(c *gin.Context) {
+	streamID := c.Param("id")
+
+	if s.startStreamHandler == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error": "start stream handler not configured",
+		})
+		return
+	}
+
+	if err := s.startStreamHandler(streamID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "started",
+		"stream_id": streamID,
+	})
+}
+
+// handleStopStream은 스트림을 중지합니다
+func (s *Server) handleStopStream(c *gin.Context) {
+	streamID := c.Param("id")
+
+	if s.stopStreamHandler == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error": "stop stream handler not configured",
+		})
+		return
+	}
+
+	if err := s.stopStreamHandler(streamID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "stopped",
+		"stream_id": streamID,
 	})
 }
 

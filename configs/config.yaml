@@ -8,12 +8,26 @@ server:
   # 프로덕션 모드 (false: 개발 모드)
   production: false
 
-rtsp:
-  # 테스트 RTSP 스트림
-  test_stream:
-    url: "rtsp://admin:live0416@192.168.4.121:554/Streaming/Channels/102"
-    name: "test-camera-1"
+# mediaMTX 스타일 paths 설정
+paths:
+  park_cctv_01:
+    source: rtsp://121.190.36.211:1031
+    sourceOnDemand: yes
+    rtspTransport: tcp
+  plx_cctv_03:
+    source: rtsp://admin:pluxity123%21%40%23@192.168.4.46:554/Streaming/Channels/101
+    sourceOnDemand: yes
+    rtspTransport: tcp
+  plx_cctv_02:
+    source: rtsp://admin:1q2w3e4r%21@192.168.4.54:554/profile2/media.smp
+    sourceOnDemand: yes
+    rtspTransport: tcp
+  plx_cctv_01:
+    source: rtsp://admin:live0416@192.168.4.121:554/Streaming/Channels/101
+    sourceOnDemand: no
+    rtspTransport: tcp
 
+rtsp:
   # RTSP 클라이언트 설정
   client:
     # 연결 타임아웃 (초)

@@ -69,11 +69,13 @@ func NewPeer(config PeerConfig) *Peer {
 }
 
 // CreateOffer는 WebRTC Offer를 생성합니다
-func (p *Peer) CreateOffer(offer string) (answer string, err error) {
+// streamCodec: RTSP 스트림의 실제 코덱 (H264 또는 H265)
+func (p *Peer) CreateOffer(offer string, streamCodec string) (answer string, err error) {
 	// Offer SDP에서 클라이언트가 지원하는 비디오 코덱 확인
-	selectedCodec := p.selectVideoCodec(offer)
-	p.logger.Info("Video codec selected based on client support",
-		zap.String("codec", selectedCodec),
+	selectedCodec := p.selectVideoCodec(offer, streamCodec)
+	p.logger.Info("Video codec selected",
+		zap.String("stream_codec", streamCodec),
+		zap.String("selected_codec", selectedCodec),
 	)
 
 	// PeerConnection 생성 (선택된 코덱 사용)
@@ -125,8 +127,8 @@ func (p *Peer) CreateOffer(offer string) (answer string, err error) {
 	return finalAnswer.SDP, nil
 }
 
-// selectVideoCodec는 클라이언트 Offer SDP에서 지원하는 비디오 코덱을 선택합니다
-func (p *Peer) selectVideoCodec(offerSDP string) string {
+// selectVideoCodec는 RTSP 스트림 코덱과 클라이언트가 지원하는 코덱을 비교하여 선택합니다
+func (p *Peer) selectVideoCodec(offerSDP string, streamCodec string) string {
 	// SDP 내용을 대소문자 구분 없이 검색
 	offerUpper := strings.ToUpper(offerSDP)
 
@@ -138,17 +140,34 @@ func (p *Peer) selectVideoCodec(offerSDP string) string {
 	supportsH264 := strings.Contains(offerUpper, "H264") ||
 					strings.Contains(offerUpper, "AVC")
 
-	// 우선순위: H.265 > H.264 (H.265가 더 효율적)
-	if supportsH265 {
-		p.logger.Info("Client supports H.265 (HEVC)")
-		return "H265"
-	} else if supportsH264 {
-		p.logger.Info("Client supports H.264 only")
+	// 스트림 코덱이 지정된 경우, 클라이언트가 지원하는지 확인
+	if streamCodec != "" {
+		if streamCodec == "H265" && supportsH265 {
+			p.logger.Info("Using stream codec H.265 (client supports it)")
+			return "H265"
+		} else if streamCodec == "H264" && supportsH264 {
+			p.logger.Info("Using stream codec H.264 (client supports it)")
+			return "H264"
+		} else {
+			p.logger.Warn("Stream codec not supported by client, trying fallback",
+				zap.String("stream_codec", streamCodec),
+				zap.Bool("supports_h265", supportsH265),
+				zap.Bool("supports_h264", supportsH264),
+			)
+		}
+	}
+
+	// Fallback: 클라이언트가 지원하는 코덱 우선 (H.264 > H.265)
+	if supportsH264 {
+		p.logger.Info("Fallback to H.264 (client supports it)")
 		return "H264"
-	} else {
-		// 기본값: H.265
-		p.logger.Warn("Client codec support unclear, defaulting to H.265")
+	} else if supportsH265 {
+		p.logger.Info("Fallback to H.265 (client supports it)")
 		return "H265"
+	} else {
+		// 기본값: H.264
+		p.logger.Warn("Client codec support unclear, defaulting to H.264")
+		return "H264"
 	}
 }
 

@@ -25,6 +25,10 @@ type Stream struct {
 	name     string
 	logger   *zap.Logger
 
+	// 미디어 정보
+	videoCodec string // H264 또는 H265
+	codecMutex sync.RWMutex
+
 	// 구독자 관리
 	subscribers map[string]StreamSubscriber
 	subMutex    sync.RWMutex
@@ -247,4 +251,19 @@ func (s *Stream) GetSubscriberCount() int {
 	s.subMutex.RLock()
 	defer s.subMutex.RUnlock()
 	return len(s.subscribers)
+}
+
+// SetVideoCodec는 스트림의 비디오 코덱을 설정합니다
+func (s *Stream) SetVideoCodec(codec string) {
+	s.codecMutex.Lock()
+	defer s.codecMutex.Unlock()
+	s.videoCodec = codec
+	s.logger.Info("Video codec set", zap.String("codec", codec))
+}
+
+// GetVideoCodec는 스트림의 비디오 코덱을 반환합니다
+func (s *Stream) GetVideoCodec() string {
+	s.codecMutex.RLock()
+	defer s.codecMutex.RUnlock()
+	return s.videoCodec
 }

@@ -36,6 +36,9 @@ type Client struct {
 	// gortsplib
 	client *gortsplib.Client
 
+	// Stream 참조 (코덱 설정용)
+	stream StreamCodecSetter
+
 	// 콜백
 	onPacket      func(packet *rtp.Packet)
 	onConnect     func()
@@ -44,6 +47,11 @@ type Client struct {
 	// 통계
 	packetsReceived uint64
 	bytesReceived   uint64
+}
+
+// StreamCodecSetter는 스트림 코덱 설정 인터페이스
+type StreamCodecSetter interface {
+	SetVideoCodec(codec string)
 }
 
 // ClientConfig는 RTSP 클라이언트 설정
@@ -56,6 +64,7 @@ type ClientConfig struct {
 	RetryCount   int
 	RetryDelay   time.Duration
 	Logger       *zap.Logger
+	Stream       StreamCodecSetter // 스트림 객체 (코덱 설정용)
 	OnPacket     func(*rtp.Packet)
 	OnConnect    func()
 	OnDisconnect func(error)
@@ -95,6 +104,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 		ctx:          ctx,
 		ctxCancel:    cancel,
 		logger:       config.Logger,
+		stream:       config.Stream,
 		onPacket:     config.OnPacket,
 		onConnect:    config.OnConnect,
 		onDisconnect: config.OnDisconnect,
@@ -238,15 +248,23 @@ func (c *Client) run() error {
 		zap.Int("media_count", len(desc.Medias)),
 	)
 
-	// 미디어 정보 로깅
+	// 미디어 정보 로깅 및 코덱 설정
 	for i, media := range desc.Medias {
 		for j, forma := range media.Formats {
+			codec := forma.Codec()
 			c.logger.Info("Media format detected",
 				zap.Int("media_index", i),
 				zap.Int("format_index", j),
-				zap.String("codec", forma.Codec()),
+				zap.String("codec", codec),
 				zap.Uint8("payload_type", forma.PayloadType()),
 			)
+
+			// 비디오 코덱인 경우 Stream에 설정
+			if i == 0 && j == 0 { // 첫 번째 미디어의 첫 번째 포맷 (보통 비디오)
+				if c.stream != nil && (codec == "H264" || codec == "H265") {
+					c.stream.SetVideoCodec(codec)
+				}
+			}
 		}
 	}
 

@@ -10,7 +10,45 @@ class WebRTCPlayer {
         this.statusElement = document.getElementById('connectionStatus');
 
         this.setupEventListeners();
+        this.setupVideoEventListeners();
         this.log('Application initialized');
+    }
+
+    setupVideoEventListeners() {
+        this.videoElement.addEventListener('loadstart', () => {
+            console.log('[VIDEO] loadstart');
+            this.log('Video loading started');
+        });
+
+        this.videoElement.addEventListener('loadedmetadata', () => {
+            console.log('[VIDEO] loadedmetadata');
+            this.log('Video metadata loaded');
+        });
+
+        this.videoElement.addEventListener('loadeddata', () => {
+            console.log('[VIDEO] loadeddata');
+            this.log('Video data loaded');
+        });
+
+        this.videoElement.addEventListener('canplay', () => {
+            console.log('[VIDEO] canplay');
+            this.log('Video can play');
+        });
+
+        this.videoElement.addEventListener('playing', () => {
+            console.log('[VIDEO] playing');
+            this.log('Video is playing');
+        });
+
+        this.videoElement.addEventListener('waiting', () => {
+            console.log('[VIDEO] waiting');
+            this.log('Video is waiting for data');
+        });
+
+        this.videoElement.addEventListener('error', (e) => {
+            console.error('[VIDEO] error:', e);
+            this.log(`Video error: ${e.message}`, 'error');
+        });
     }
 
     setupEventListeners() {
@@ -109,11 +147,22 @@ class WebRTCPlayer {
             this.updateStat('statSignalingState', this.pc.signalingState);
         };
 
-        this.pc.ontrack = (event) => {
+        this.pc.ontrack = async (event) => {
+            console.log('[TRACK] Received remote track:', event.track.kind);
             this.log('Received remote track');
             if (this.videoElement.srcObject !== event.streams[0]) {
                 this.videoElement.srcObject = event.streams[0];
                 this.log('Video stream attached');
+
+                // Explicitly play the video
+                try {
+                    await this.videoElement.play();
+                    console.log('[VIDEO] Playback started');
+                    this.log('Video playback started');
+                } catch (error) {
+                    console.error('[VIDEO] Play error:', error);
+                    this.log(`Failed to start playback: ${error.message}`, 'error');
+                }
             }
         };
 
@@ -142,9 +191,9 @@ class WebRTCPlayer {
             console.log('[OFFER] Signaling state:', this.pc.signalingState);
             this.log('Local description set');
 
-            // Offer 전송
+            // Offer 전송 (서버가 기대하는 형식: {sdp: string, streamId: string})
             console.log('[OFFER] Sending offer to server...');
-            this.sendMessage('offer', offer.sdp);
+            this.sendMessage('offer', { sdp: offer.sdp, streamId: 'stream1' });
 
         } catch (error) {
             console.error('[OFFER] Error:', error);

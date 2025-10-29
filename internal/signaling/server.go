@@ -20,8 +20,8 @@ type Server struct {
 	mutex   sync.RWMutex
 
 	// 콜백
-	onOffer  func(offer string, streamID string, client *Client) (answer string, err error)
-	onClose  func(clientID string)
+	onOffer func(offer string, streamID string, client *Client) (answer string, err error)
+	onClose func(clientID string)
 }
 
 // Client는 WebSocket 클라이언트를 나타냅니다

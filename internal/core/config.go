@@ -9,13 +9,21 @@ import (
 
 // Config는 전체 애플리케이션 설정을 담는 구조체
 type Config struct {
-	Server      ServerConfig      `yaml:"server"`
-	RTSP        RTSPConfig        `yaml:"rtsp"`
-	WebRTC      WebRTCConfig      `yaml:"webrtc"`
-	Media       MediaConfig       `yaml:"media"`
-	Logging     LoggingConfig     `yaml:"logging"`
-	Metrics     MetricsConfig     `yaml:"metrics"`
-	Performance PerformanceConfig `yaml:"performance"`
+	Server      ServerConfig          `yaml:"server"`
+	Paths       map[string]PathConfig `yaml:"paths"`
+	RTSP        RTSPConfig            `yaml:"rtsp"`
+	WebRTC      WebRTCConfig          `yaml:"webrtc"`
+	Media       MediaConfig           `yaml:"media"`
+	Logging     LoggingConfig         `yaml:"logging"`
+	Metrics     MetricsConfig         `yaml:"metrics"`
+	Performance PerformanceConfig     `yaml:"performance"`
+}
+
+// PathConfig는 mediaMTX 스타일 경로 설정
+type PathConfig struct {
+	Source         string `yaml:"source"`
+	SourceOnDemand bool   `yaml:"sourceOnDemand"`
+	RTSPTransport  string `yaml:"rtspTransport"`
 }
 
 type ServerConfig struct {
