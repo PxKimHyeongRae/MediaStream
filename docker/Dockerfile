@@ -45,8 +45,9 @@ COPY --from=builder /build/bin/media-server /app/media-server
 RUN mkdir -p /app/configs /app/logs && \
     chown -R appuser:appgroup /app
 
-# 설정 파일 복사
+# 설정 파일 및 웹 리소스 복사
 COPY configs/config.yaml /app/configs/
+COPY web/static /app/web/static
 
 # 비특권 사용자로 전환
 USER appuser
