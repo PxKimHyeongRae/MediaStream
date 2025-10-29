@@ -8,7 +8,7 @@ server:
   # 프로덕션 모드 (false: 개발 모드)
   production: false
 
-# mediaMTX 스타일 paths 설정
+# 카메라 스트림 설정
 paths:
   park_cctv_01:
     source: rtsp://121.190.36.211:1031

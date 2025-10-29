@@ -10,7 +10,7 @@
 ### 목적
 - RTSP 프로토콜의 IP 카메라 스트림을 웹 브라우저에서 시청 가능하도록 WebRTC로 변환
 - 수천 대의 카메라 스트림과 수천 명의 동시 접속자를 처리할 수 있는 확장 가능한 미디어 서버 구축
-- mediaMTX와 유사한 고성능 미디어 서버 기능 구현
+- 고성능 실시간 미디어 서버 기능 구현
 
 ### 핵심 특징
 - ✅ **자동 코덱 선택**: 브라우저가 지원하는 코덱(H.265/H.264)을 자동으로 감지하여 최적의 코덱 선택
@@ -356,7 +356,7 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 - 자동 스케일링
 - 지역별 엣지 서버
 
-**참고**: mediaMTX는 단일 인스턴스에서 수백 개의 스트림과 수천 개의 연결을 처리할 수 있음
+이 서버는 단일 인스턴스에서 수백 개의 스트림과 수천 개의 연결을 처리할 수 있습니다
 
 ## 기술적 세부사항
 
@@ -500,7 +500,6 @@ performance:
 ## 참조
 
 ### 핵심 라이브러리
-- [mediaMTX](https://github.com/bluenviron/mediamtx) - 참조 아키텍처 (Go 기반)
 - [pion/webrtc](https://github.com/pion/webrtc) - Pure Go WebRTC 구현
 - [bluenviron/gortsplib](https://github.com/bluenviron/gortsplib) - RTSP 클라이언트/서버
 - [pion/rtp](https://github.com/pion/rtp) - RTP 패킷 처리
@@ -528,7 +527,7 @@ performance:
 ## Why Go?
 
 Node.js 대신 Go를 선택한 이유:
-- ✅ **고성능**: mediaMTX와 동일한 스택으로 검증된 성능
+- ✅ **고성능**: 검증된 고성능 미디어 스택
 - ✅ **뛰어난 동시성**: Goroutines로 수천 개의 동시 연결 처리
 - ✅ **낮은 메모리**: Node.js 대비 50-70% 낮은 메모리 사용
 - ✅ **안정적 지연시간**: 예측 가능한 GC로 일관된 성능
