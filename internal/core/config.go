@@ -21,9 +21,15 @@ type Config struct {
 
 // PathConfig는 mediaMTX 스타일 경로 설정
 type PathConfig struct {
-	Source         string `yaml:"source"`
-	SourceOnDemand bool   `yaml:"sourceOnDemand"`
-	RTSPTransport  string `yaml:"rtspTransport"`
+	// RTSP Source 설정
+	Source         string `yaml:"source" json:"source,omitempty"`
+	SourceOnDemand bool   `yaml:"sourceOnDemand" json:"sourceOnDemand,omitempty"`
+	RTSPTransport  string `yaml:"rtspTransport" json:"rtspTransport,omitempty"`
+
+	// RunOnDemand 설정 (외부 프로세스 실행, 예: ffmpeg 트랜스코딩)
+	RunOnDemand           string `yaml:"runOnDemand,omitempty" json:"runOnDemand,omitempty"`
+	RunOnDemandRestart    bool   `yaml:"runOnDemandRestart,omitempty" json:"runOnDemandRestart,omitempty"`
+	RunOnDemandCloseAfter string `yaml:"runOnDemandCloseAfter,omitempty" json:"runOnDemandCloseAfter,omitempty"`
 }
 
 type ServerConfig struct {
@@ -33,9 +39,18 @@ type ServerConfig struct {
 }
 
 type RTSPConfig struct {
+	Server     RTSPServerConfig `yaml:"server"`
 	TestStream TestStreamConfig `yaml:"test_stream"`
 	Client     RTSPClientConfig `yaml:"client"`
 	Pool       RTSPPoolConfig   `yaml:"pool"`
+}
+
+type RTSPServerConfig struct {
+	Enabled      bool     `yaml:"enabled"`
+	Port         int      `yaml:"port"`
+	Protocols    []string `yaml:"protocols"`
+	ReadTimeout  int      `yaml:"read_timeout"`
+	WriteTimeout int      `yaml:"write_timeout"`
 }
 
 type TestStreamConfig struct {

@@ -28,6 +28,20 @@ paths:
     rtspTransport: tcp
 
 rtsp:
+  # RTSP 서버 설정 (ffmpeg publish/subscribe용)
+  server:
+    # RTSP 서버 활성화
+    enabled: true
+    # RTSP 서버 포트
+    port: 8554
+    # 지원 프로토콜 (tcp, udp)
+    protocols:
+      - tcp
+    # 읽기 타임아웃 (초, 0=무제한)
+    read_timeout: 0
+    # 쓰기 타임아웃 (초, 0=무제한)
+    write_timeout: 0
+
   # RTSP 클라이언트 설정
   client:
     # 연결 타임아웃 (초)

@@ -23,6 +23,7 @@ type Server struct {
 	startStreamHandler  func(streamID string) error
 	stopStreamHandler   func(streamID string) error
 	websocketHandler    func(http.ResponseWriter, *http.Request)
+	pathsHandler        *PathsHandler
 }
 
 // ServerConfig는 API 서버 설정
@@ -36,6 +37,7 @@ type ServerConfig struct {
 	StartStreamHandler func(streamID string) error
 	StopStreamHandler  func(streamID string) error
 	WebSocketHandler   func(http.ResponseWriter, *http.Request)
+	PathsHandler       *PathsHandler
 }
 
 // NewServer는 새로운 API 서버를 생성합니다
@@ -52,15 +54,16 @@ func NewServer(config ServerConfig) *Server {
 	router.Use(loggerMiddleware(config.Logger))
 
 	server := &Server{
-		logger:            config.Logger,
-		router:            router,
-		port:              config.Port,
-		healthHandler:     config.HealthHandler,
-		streamsHandler:    config.StreamsHandler,
-		streamInfoHandler: config.StreamInfoHandler,
+		logger:             config.Logger,
+		router:             router,
+		port:               config.Port,
+		healthHandler:      config.HealthHandler,
+		streamsHandler:     config.StreamsHandler,
+		streamInfoHandler:  config.StreamInfoHandler,
 		startStreamHandler: config.StartStreamHandler,
-		stopStreamHandler: config.StopStreamHandler,
-		websocketHandler:  config.WebSocketHandler,
+		stopStreamHandler:  config.StopStreamHandler,
+		websocketHandler:   config.WebSocketHandler,
+		pathsHandler:       config.PathsHandler,
 	}
 
 	server.setupRoutes()
@@ -81,6 +84,20 @@ func (s *Server) setupRoutes() {
 		v1.POST("/streams/:id/start", s.handleStartStream)
 		v1.DELETE("/streams/:id", s.handleStopStream)
 		v1.GET("/stats", s.handleStats)
+
+		// Paths (동적 스트림 관리)
+		if s.pathsHandler != nil {
+			v1.GET("/paths", s.pathsHandler.GetAllPaths)
+			v1.GET("/paths/:id", s.pathsHandler.GetPath)
+			v1.POST("/paths", s.pathsHandler.AddPaths)
+			v1.PUT("/paths/:id", s.pathsHandler.UpdatePath)
+			v1.DELETE("/paths/:id", s.pathsHandler.DeletePath)
+		}
+
+		// Config schema
+		if s.pathsHandler != nil {
+			v1.GET("/config/schema", s.pathsHandler.GetConfigSchema)
+		}
 	}
 
 	// WebSocket signaling
