@@ -7,12 +7,13 @@ services:
       dockerfile: docker/Dockerfile
       args:
         - GO_VERSION=1.23
-    image: rtsp-webrtc-server:latest
+    image: media-server:latest
     container_name: rtsp-webrtc-server
     ports:
-      - "${HTTP_PORT:-8080}:8080"      # HTTP API & Web UI
-      - "${WS_PORT:-8081}:8081"        # WebSocket Signaling
-      - "${METRICS_PORT:-9090}:9090"   # Prometheus Metrics
+      - "${MEDIASTREAM_HTTP_PORT}:${MEDIASTREAM_HTTP_PORT}"
+      - "${MEDIASTREAM_WS_PORT}:${MEDIASTREAM_WS_PORT}"
+      - "${MEDIASTREAM_METRICS_PORT}:${MEDIASTREAM_METRICS_PORT}"
+      - "${MEDIASTREAM_UDP_MIN}-${MEDIASTREAM_UDP_MAX}:${MEDIASTREAM_UDP_MIN}-${MEDIASTREAM_UDP_MAX}/udp"
     volumes:
       # Config file (read-only)
       - ../configs/config.yaml:/app/configs/config.yaml:ro
@@ -27,50 +28,11 @@ services:
     networks:
       - media-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/v1/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-
-  # Prometheus (선택적)
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    ports:
-      - "9091:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-    restart: unless-stopped
-    networks:
-      - media-network
-    profiles:
-      - monitoring
-
-  # Grafana (선택적)
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    restart: unless-stopped
-    networks:
-      - media-network
-    profiles:
-      - monitoring
 
 volumes:
   media-logs:

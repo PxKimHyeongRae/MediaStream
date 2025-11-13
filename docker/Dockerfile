@@ -1,13 +1,7 @@
-# Multi-stage build for minimal image size
-
-# Build stage
 FROM golang:1.23-alpine AS builder
 
-# 빌드에 필요한 패키지 설치
-RUN apk add --no-cache git make
-
 # 작업 디렉토리 설정
-WORKDIR /build
+WORKDIR /app
 
 # 의존성 파일 복사 및 다운로드
 COPY go.mod go.sum ./
@@ -20,7 +14,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -trimpath \
-    -o /build/bin/media-server \
+    -o /app/bin/media-server \
     cmd/server/main.go
 
 # Runtime stage
@@ -39,15 +33,14 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
 
 # 빌드 스테이지에서 바이너리 복사
-COPY --from=builder /build/bin/media-server /app/media-server
+COPY --from=builder /app/bin/media-server /app/media-server
 
 # 설정 파일 디렉토리 생성
-RUN mkdir -p /app/configs /app/logs && \
+RUN mkdir -p /app/configs /app/logs /app/web && \
     chown -R appuser:appgroup /app
 
 # 설정 파일 및 웹 리소스 복사
-COPY configs/config.yaml /app/configs/
-COPY web/static /app/web/static
+COPY --from=builder /app/web/static /app/web/static/
 
 # 비특권 사용자로 전환
 USER appuser

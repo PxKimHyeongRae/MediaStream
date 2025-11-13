@@ -83,3 +83,5 @@ yarn-error.log
 
 # Air (hot reload tool)
 tmp/
+/mediamtx-main/
+media-server.tar

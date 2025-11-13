@@ -2,9 +2,9 @@
 
 server:
   # HTTP API 서버 설정
-  http_port: 8080
+  http_port: 8107
   # WebSocket 시그널링 포트
-  ws_port: 8081
+  ws_port: 8106
   # 프로덕션 모드 (false: 개발 모드)
   production: false
 
