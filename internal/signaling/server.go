@@ -35,8 +35,9 @@ type Client struct {
 
 // Message는 시그널링 메시지를 나타냅니다
 type Message struct {
-	Type    string          `json:"type"`    // "offer", "answer", "ice"
-	Payload json.RawMessage `json:"payload"` // SDP (string) or ICE candidate (object)
+	Type     string          `json:"type"`     // "offer", "answer", "ice"
+	StreamID string          `json:"streamId"` // 스트림 ID (모든 메시지에 포함)
+	Payload  json.RawMessage `json:"payload"`  // SDP (string) or ICE candidate (object)
 }
 
 // OfferPayload는 Offer 페이로드를 나타냅니다
@@ -171,6 +172,7 @@ func (c *Client) handleMessage(data []byte) {
 
 	c.logger.Debug("Received message",
 		zap.String("type", msg.Type),
+		zap.String("stream_id", msg.StreamID),
 	)
 
 	switch msg.Type {
@@ -181,17 +183,22 @@ func (c *Client) handleMessage(data []byte) {
 			c.logger.Error("Failed to parse offer payload", zap.Error(err))
 			return
 		}
-		c.handleOffer(offerPayload.SDP, offerPayload.StreamID)
+		// streamId는 메시지 레벨과 payload 레벨 모두에서 제공될 수 있음
+		streamID := msg.StreamID
+		if streamID == "" {
+			streamID = offerPayload.StreamID
+		}
+		c.handleOffer(offerPayload.SDP, streamID, msg.StreamID)
 	case "ice":
 		// ICE candidate는 object로 전달됨
-		c.handleICE(msg.Payload)
+		c.handleICE(msg.Payload, msg.StreamID)
 	default:
 		c.logger.Warn("Unknown message type", zap.String("type", msg.Type))
 	}
 }
 
 // handleOffer는 Offer를 처리합니다
-func (c *Client) handleOffer(offer string, streamID string) {
+func (c *Client) handleOffer(offer string, streamID string, messageStreamID string) {
 	if c.server.onOffer == nil {
 		c.logger.Error("No offer handler configured")
 		return
@@ -204,23 +211,26 @@ func (c *Client) handleOffer(offer string, streamID string) {
 	answer, err := c.server.onOffer(offer, streamID, c)
 	if err != nil {
 		c.logger.Error("Failed to handle offer", zap.Error(err))
-		c.SendError(err.Error())
+		c.SendError(err.Error(), messageStreamID)
 		return
 	}
 
-	c.SendAnswer(answer)
+	c.SendAnswer(answer, messageStreamID)
 }
 
 // handleICE는 ICE candidate를 처리합니다
-func (c *Client) handleICE(candidateData json.RawMessage) {
+func (c *Client) handleICE(candidateData json.RawMessage, streamID string) {
 	// ICE candidate는 브라우저에서 object 형태로 전달됨
 	// 예: {"candidate": "...", "sdpMLineIndex": 0, "sdpMid": "0"}
 	// 현재는 로깅만 수행 (실제 처리는 브라우저가 trickle ICE로 자동 처리)
-	c.logger.Debug("ICE candidate received", zap.ByteString("candidate", candidateData))
+	c.logger.Debug("ICE candidate received",
+		zap.String("stream_id", streamID),
+		zap.ByteString("candidate", candidateData),
+	)
 }
 
 // SendAnswer는 Answer를 전송합니다
-func (c *Client) SendAnswer(answer string) {
+func (c *Client) SendAnswer(answer string, streamID string) {
 	// Answer는 이미 문자열이므로 직접 RawMessage로 변환
 	// json.Marshal(string)을 사용하면 이중 인코딩됨: "sdp" → "\"sdp\""
 	// 대신 string을 JSON으로 직접 인코딩
@@ -231,8 +241,9 @@ func (c *Client) SendAnswer(answer string) {
 	}
 
 	msg := Message{
-		Type:    "answer",
-		Payload: answerJSON, // 이미 JSON으로 인코딩된 string
+		Type:     "answer",
+		StreamID: streamID,
+		Payload:  answerJSON, // 이미 JSON으로 인코딩된 string
 	}
 
 	data, err := json.Marshal(msg)
@@ -243,14 +254,14 @@ func (c *Client) SendAnswer(answer string) {
 
 	select {
 	case c.send <- data:
-		c.logger.Info("Answer sent")
+		c.logger.Info("Answer sent", zap.String("stream_id", streamID))
 	default:
 		c.logger.Error("Send channel full, dropping answer")
 	}
 }
 
 // SendError는 에러 메시지를 전송합니다
-func (c *Client) SendError(errorMsg string) {
+func (c *Client) SendError(errorMsg string, streamID string) {
 	// Error를 JSON string으로 마샬링
 	errorJSON, err := json.Marshal(errorMsg)
 	if err != nil {
@@ -259,8 +270,9 @@ func (c *Client) SendError(errorMsg string) {
 	}
 
 	msg := Message{
-		Type:    "error",
-		Payload: errorJSON,
+		Type:     "error",
+		StreamID: streamID,
+		Payload:  errorJSON,
 	}
 
 	data, err := json.Marshal(msg)

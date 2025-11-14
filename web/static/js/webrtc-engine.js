@@ -1,9 +1,9 @@
 /**
  * WebRTCEngine - 재사용 가능한 WebRTC 클라이언트 라이브러리
+ * 브라우저당 하나의 WebSocket 연결을 공유하여 여러 스트림 관리
  *
  * @example
  * const engine = new WebRTCEngine({
- *   serverUrl: 'ws://localhost:8080/ws',
  *   streamId: 'park_cctv_01',
  *   videoElement: document.getElementById('video1')
  * });
@@ -25,15 +25,20 @@ class WebRTCEngine {
         }
 
         // 설정
-        this.serverUrl = config.serverUrl || `ws://${window.location.host}/ws`;
         this.streamId = config.streamId;
         this.videoElement = config.videoElement;
         this.autoReconnect = config.autoReconnect !== undefined ? config.autoReconnect : true;
         this.reconnectDelay = config.reconnectDelay || 3000;
 
+        // 공유 WebSocket 매니저 사용
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 Getting WebSocketManager instance...`);
+        this.wsManager = WebSocketManager.getInstance();
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 WebSocketManager instance ID:`, this.wsManager.instanceId);
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 WebSocketManager connected:`, this.wsManager.isConnected());
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 WebSocketManager stream count:`, this.wsManager.streamHandlers.size);
+
         // 상태
         this.pc = null;
-        this.ws = null;
         this.connected = false;
         this.reconnecting = false;
         this.reconnectTimer = null;
@@ -61,7 +66,7 @@ class WebRTCEngine {
         this.videoElement.playsinline = true;
         this.videoElement.muted = true;
 
-        this.log('WebRTCEngine initialized', { streamId: this.streamId });
+        this.log(`🎬 WebRTCEngine initialized for stream: ${this.streamId}`);
     }
 
     /**
@@ -98,7 +103,7 @@ class WebRTCEngine {
             this.log('Connecting...');
             this.emit('statechange', 'connecting');
 
-            // WebSocket 연결
+            // 공유 WebSocket 연결 (이미 연결되어 있으면 재사용)
             await this.connectWebSocket();
 
             // PeerConnection 생성
@@ -118,43 +123,38 @@ class WebRTCEngine {
     }
 
     /**
-     * WebSocket 연결
+     * WebSocket 연결 (공유 매니저 사용)
      */
-    connectWebSocket() {
-        return new Promise((resolve, reject) => {
-            this.log('Connecting to WebSocket:', this.serverUrl);
-            this.ws = new WebSocket(this.serverUrl);
+    async connectWebSocket() {
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 connectWebSocket() called`);
+        this.log('📡 Setting up WebSocket handlers...');
 
-            const timeout = setTimeout(() => {
-                reject(new Error('WebSocket connection timeout'));
-            }, 10000);
-
-            this.ws.onopen = () => {
-                clearTimeout(timeout);
-                this.log('WebSocket connected');
-                resolve();
-            };
-
-            this.ws.onmessage = (event) => {
-                try {
-                    const message = JSON.parse(event.data);
-                    this.handleSignalingMessage(message);
-                } catch (error) {
-                    this.log('Failed to parse message:', error, 'error');
-                }
-            };
-
-            this.ws.onerror = (error) => {
-                clearTimeout(timeout);
-                this.log('WebSocket error:', error, 'error');
-                reject(error);
-            };
-
-            this.ws.onclose = () => {
-                this.log('WebSocket closed');
-                this.handleDisconnect();
-            };
+        // 스트림별 핸들러 등록
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 Registering stream handlers...`);
+        this.wsManager.registerStream(this.streamId, {
+            'answer': (payload) => this.handleAnswer(payload),
+            'ice': (payload) => this.handleICE(payload),
+            'error': (payload) => {
+                this.log('❌ Server error:', payload, 'error');
+                this.emit('error', new Error(payload));
+            }
         });
+
+        // WebSocket 연결 (이미 연결되어 있으면 재사용)
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 Checking WebSocket connection...`);
+        console.log(`[WebRTCEngine:${this.streamId}] 🔍 isConnected:`, this.wsManager.isConnected());
+
+        if (!this.wsManager.isConnected()) {
+            this.log('🔌 WebSocket not connected, initiating connection...');
+            console.log(`[WebRTCEngine:${this.streamId}] 🔍 Calling wsManager.connect()...`);
+            await this.wsManager.connect();
+            console.log(`[WebRTCEngine:${this.streamId}] 🔍 wsManager.connect() returned`);
+            this.log('✅ WebSocket connection established (shared)');
+        } else {
+            this.log('♻️ Reusing existing WebSocket connection');
+        }
+
+        this.log('✅ WebSocket ready for stream:', this.streamId);
     }
 
     /**
@@ -232,7 +232,7 @@ class WebRTCEngine {
         await this.pc.setLocalDescription(offer);
         this.log('Local description set');
 
-        // Offer 전송
+        // Offer 전송 (streamId 포함)
         this.sendMessage('offer', {
             sdp: offer.sdp,
             streamId: this.streamId
@@ -240,24 +240,13 @@ class WebRTCEngine {
     }
 
     /**
-     * 시그널링 메시지 처리
+     * 메시지 전송
      */
-    handleSignalingMessage(message) {
-        this.log('Received message:', message.type);
-
-        switch (message.type) {
-            case 'answer':
-                this.handleAnswer(message.payload);
-                break;
-            case 'ice':
-                this.handleICE(message.payload);
-                break;
-            case 'error':
-                this.log('Server error:', message.payload, 'error');
-                this.emit('error', new Error(message.payload));
-                break;
-            default:
-                this.log('Unknown message type:', message.type, 'warn');
+    sendMessage(type, payload) {
+        try {
+            this.wsManager.send(type, this.streamId, payload);
+        } catch (error) {
+            this.log('Failed to send message:', error, 'error');
         }
     }
 
@@ -290,16 +279,6 @@ class WebRTCEngine {
         }
     }
 
-    /**
-     * 메시지 전송
-     */
-    sendMessage(type, payload) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type, payload }));
-        } else {
-            this.log('Cannot send message - WebSocket not connected', 'error');
-        }
-    }
 
     /**
      * 연결 해제 처리
@@ -422,9 +401,9 @@ class WebRTCEngine {
             this.pc = null;
         }
 
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
+        // WebSocket 핸들러 해제 (공유 매니저가 관리)
+        if (cleanup) {
+            this.wsManager.unregisterStream(this.streamId);
         }
 
         if (this.videoElement.srcObject) {
