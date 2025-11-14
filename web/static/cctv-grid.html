@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCTV 그리드 뷰어</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f0f0f;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toolbar {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .toolbar button {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .toolbar button:hover {
+            background: #1976D2;
+        }
+
+        .toolbar select {
+            padding: 10px;
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #444;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .summary {
+            margin-left: auto;
+            font-size: 14px;
+            color: #999;
+        }
+
+        .summary span {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .grid {
+            display: grid;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .grid.grid-1 {
+            grid-template-columns: 1fr;
+        }
+
+        .grid.grid-2 {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .grid.grid-3 {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
+        .grid.grid-4 {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .grid-item {
+            background: #1a1a1a;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transition: transform 0.2s;
+        }
+
+        .grid-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(0,0,0,0.7);
+        }
+
+        .grid-item video {
+            width: 100%;
+            height: auto;
+            background: #000;
+            display: block;
+            cursor: pointer;
+        }
+
+        .grid-item-header {
+            padding: 12px 15px;
+            background: #2a2a2a;
+            color: #fff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .camera-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .camera-name {
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .camera-id {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .camera-stats {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #666;
+        }
+
+        .status-indicator.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .bitrate {
+            font-size: 12px;
+            color: #999;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* 모달 스타일 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            max-width: 1280px;
+            width: 100%;
+        }
+
+        .modal video {
+            width: 100%;
+            height: auto;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            font-size: 30px;
+            cursor: pointer;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        @media (max-width: 1200px) {
+            .grid.grid-3 {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 20px;
+            }
+
+            .grid.grid-2,
+            .grid.grid-3,
+            .grid.grid-4 {
+                grid-template-columns: 1fr;
+            }
+
+            .toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .summary {
+                margin-left: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📹 CCTV 모니터링 그리드</h1>
+
+        <div class="toolbar">
+            <button id="connectAllBtn">🔌 모두 연결</button>
+            <button id="disconnectAllBtn">⏸️ 모두 해제</button>
+            <select id="gridLayout">
+                <option value="2">2x2 그리드</option>
+                <option value="3">3x3 그리드</option>
+                <option value="4" selected>2x2 그리드 (4개)</option>
+                <option value="1">단일 뷰</option>
+            </select>
+            <div class="summary">
+                연결됨: <span id="connectedCount">0</span> / <span id="totalCount">0</span>
+            </div>
+        </div>
+
+        <div class="grid grid-4" id="cctv-grid">
+            <!-- JavaScript로 동적 생성 -->
+        </div>
+    </div>
+
+    <!-- 전체화면 모달 -->
+    <div class="modal" id="modal">
+        <button class="modal-close" id="modalClose">×</button>
+        <div class="modal-content">
+            <video id="modalVideo" autoplay playsinline muted controls></video>
+        </div>
+    </div>
+
+    <script src="/static/js/websocket-manager.js"></script>
+    <script src="/static/js/webrtc-engine.js"></script>
+    <script>
+        // CCTV 설정 - 여기에 실제 스트림 ID를 추가하세요
+        const cameras = [
+            { id: 'camera1', name: '정문' },
+            { id: 'camera2', name: '후문' },
+            { id: 'camera3', name: '주차장' },
+            { id: 'camera4', name: '로비' }
+        ];
+
+        const engines = new Map();
+        const grid = document.getElementById('cctv-grid');
+        const connectedCountEl = document.getElementById('connectedCount');
+        const totalCountEl = document.getElementById('totalCount');
+        const gridLayoutSelect = document.getElementById('gridLayout');
+        const modal = document.getElementById('modal');
+        const modalVideo = document.getElementById('modalVideo');
+        let connectedCount = 0;
+
+        totalCountEl.textContent = cameras.length;
+
+        // 그리드 레이아웃 변경
+        gridLayoutSelect.addEventListener('change', (e) => {
+            grid.className = 'grid grid-' + e.target.value;
+        });
+
+        // 각 카메라 그리드 아이템 생성
+        cameras.forEach((camera, index) => {
+            // 그리드 아이템 생성
+            const item = document.createElement('div');
+            item.className = 'grid-item';
+            item.innerHTML = `
+                <div class="grid-item-header">
+                    <div class="camera-info">
+                        <span class="camera-name">${camera.name}</span>
+                        <span class="camera-id">${camera.id}</span>
+                    </div>
+                    <div class="camera-stats">
+                        <span class="bitrate" id="bitrate-${camera.id}">0 kbps</span>
+                        <div class="status-indicator" id="status-${camera.id}"></div>
+                    </div>
+                </div>
+                <video id="video-${camera.id}" autoplay playsinline muted></video>
+            `;
+            grid.appendChild(item);
+
+            const videoElement = document.getElementById(`video-${camera.id}`);
+
+            // 비디오 클릭으로 전체화면 모달
+            videoElement.addEventListener('click', () => {
+                if (engines.get(camera.id)?.isConnected()) {
+                    modalVideo.srcObject = videoElement.srcObject;
+                    modal.classList.add('active');
+                }
+            });
+
+            // WebRTC Engine 생성
+            const engine = new WebRTCEngine({
+                streamId: camera.id,
+                videoElement: videoElement,
+                autoReconnect: true
+            });
+
+            const statusIndicator = document.getElementById(`status-${camera.id}`);
+            const bitrateEl = document.getElementById(`bitrate-${camera.id}`);
+
+            // 이벤트 핸들러
+            engine.on('connected', () => {
+                statusIndicator.classList.add('connected');
+                connectedCount++;
+                updateConnectedCount();
+                console.log(`✅ ${camera.name} (${camera.id}) 연결됨`);
+            });
+
+            engine.on('disconnected', () => {
+                statusIndicator.classList.remove('connected');
+                bitrateEl.textContent = '0 kbps';
+                connectedCount = Math.max(0, connectedCount - 1);
+                updateConnectedCount();
+                console.log(`❌ ${camera.name} (${camera.id}) 연결 끊김`);
+            });
+
+            engine.on('error', (error) => {
+                console.error(`⚠️ ${camera.name} (${camera.id}) 에러:`, error);
+            });
+
+            engine.on('stats', (stats) => {
+                bitrateEl.textContent = `${stats.bitrate.toFixed(0)} kbps`;
+            });
+
+            engines.set(camera.id, engine);
+        });
+
+        // 연결된 카메라 수 업데이트
+        function updateConnectedCount() {
+            connectedCountEl.textContent = connectedCount;
+        }
+
+        // 모두 연결 버튼
+        document.getElementById('connectAllBtn').addEventListener('click', async () => {
+            console.log('🔌 모든 스트림 연결 시작...');
+            const promises = Array.from(engines.values()).map(engine => {
+                return engine.connect().catch(err => {
+                    console.error('연결 실패:', err);
+                });
+            });
+            await Promise.all(promises);
+        });
+
+        // 모두 해제 버튼
+        document.getElementById('disconnectAllBtn').addEventListener('click', () => {
+            console.log('⏸️ 모든 스트림 연결 해제...');
+            engines.forEach(engine => engine.disconnect(false));
+        });
+
+        // 모달 닫기
+        document.getElementById('modalClose').addEventListener('click', () => {
+            modal.classList.remove('active');
+            modalVideo.srcObject = null;
+        });
+
+        // 모달 배경 클릭으로 닫기
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('active');
+                modalVideo.srcObject = null;
+            }
+        });
+
+        // ESC 키로 모달 닫기
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('active')) {
+                modal.classList.remove('active');
+                modalVideo.srcObject = null;
+            }
+        });
+
+        // 페이지 언로드 시 정리
+        window.addEventListener('beforeunload', () => {
+            engines.forEach(engine => engine.disconnect());
+        });
+
+        // 페이지 로드 시 자동 연결 (선택사항)
+        // window.addEventListener('load', () => {
+        //     document.getElementById('connectAllBtn').click();
+        // });
+    </script>
+</body>
+</html>
+

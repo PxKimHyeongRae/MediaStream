@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCTV 단일 뷰어</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f0f0f;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .player-wrapper {
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+
+        .controls {
+            background: #1a1a1a;
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+
+        button:hover:not(:disabled) {
+            background: #1976D2;
+        }
+
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        button.secondary {
+            background: #666;
+        }
+
+        button.secondary:hover:not(:disabled) {
+            background: #777;
+        }
+
+        .status {
+            padding: 8px 16px;
+            background: #2a2a2a;
+            border-radius: 4px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status.connected {
+            background: #0a4d0a;
+        }
+
+        .status.disconnected {
+            background: #4d0a0a;
+        }
+
+        .status.connecting {
+            background: #4d4d0a;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+            animation: pulse 2s infinite;
+        }
+
+        .status.connected .status-dot {
+            background: #4CAF50;
+        }
+
+        .status.disconnected .status-dot {
+            background: #f44336;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .stats {
+            margin-left: auto;
+            font-size: 12px;
+            color: #999;
+            font-family: 'Courier New', monospace;
+        }
+
+        .info-panel {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .info-item:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: #999;
+        }
+
+        .info-value {
+            font-family: 'Courier New', monospace;
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 20px;
+            }
+
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .stats {
+                margin-left: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            📹 CCTV 모니터링
+        </h1>
+
+        <div class="player-wrapper">
+            <video id="cctv" autoplay playsinline muted></video>
+
+            <div class="controls">
+                <button id="connectBtn">🔌 연결</button>
+                <button id="disconnectBtn" class="secondary" disabled>⏸️ 연결 해제</button>
+                <button id="muteBtn" class="secondary">🔊 음소거 해제</button>
+                <button id="fullscreenBtn" class="secondary">⛶ 전체화면</button>
+
+                <div class="status" id="status">
+                    <div class="status-dot"></div>
+                    <span>대기 중</span>
+                </div>
+                <div class="stats" id="stats">0 kbps</div>
+            </div>
+        </div>
+
+        <div class="info-panel">
+            <div class="info-item">
+                <span class="info-label">스트림 ID:</span>
+                <span class="info-value" id="streamId">-</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">연결 상태:</span>
+                <span class="info-value" id="connState">-</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">수신 패킷:</span>
+                <span class="info-value" id="packets">0</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">수신 데이터:</span>
+                <span class="info-value" id="bytes">0 MB</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/websocket-manager.js"></script>
+    <script src="/static/js/webrtc-engine.js"></script>
+    <script>
+        // URL에서 스트림 ID 가져오기 (예: ?stream=camera1)
+        const urlParams = new URLSearchParams(window.location.search);
+        const streamId = urlParams.get('stream') || 'camera1';
+
+        document.getElementById('streamId').textContent = streamId;
+
+        // 엘리먼트 참조
+        const videoElement = document.getElementById('cctv');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const muteBtn = document.getElementById('muteBtn');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const statusDiv = document.getElementById('status');
+        const statusText = statusDiv.querySelector('span');
+        const statsDiv = document.getElementById('stats');
+
+        let engine = null;
+
+        // 연결 버튼
+        connectBtn.addEventListener('click', async () => {
+            if (!engine) {
+                engine = new WebRTCEngine({
+                    streamId: streamId,
+                    videoElement: videoElement
+                });
+
+                setupEngineEvents();
+            }
+
+            statusText.textContent = '연결 중...';
+            statusDiv.className = 'status connecting';
+            connectBtn.disabled = true;
+
+            try {
+                await engine.connect();
+            } catch (error) {
+                console.error('연결 실패:', error);
+                statusText.textContent = '연결 실패';
+                statusDiv.className = 'status disconnected';
+                connectBtn.disabled = false;
+            }
+        });
+
+        // 연결 해제 버튼
+        disconnectBtn.addEventListener('click', () => {
+            if (engine) {
+                engine.disconnect();
+            }
+        });
+
+        // 음소거 토글
+        muteBtn.addEventListener('click', () => {
+            videoElement.muted = !videoElement.muted;
+            muteBtn.innerHTML = videoElement.muted ? '🔊 음소거 해제' : '🔇 음소거';
+        });
+
+        // 전체화면
+        fullscreenBtn.addEventListener('click', () => {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else {
+                if (videoElement.requestFullscreen) {
+                    videoElement.requestFullscreen();
+                } else if (videoElement.webkitRequestFullscreen) {
+                    videoElement.webkitRequestFullscreen();
+                }
+            }
+        });
+
+        // 전체화면 상태 변경 감지
+        document.addEventListener('fullscreenchange', () => {
+            fullscreenBtn.innerHTML = document.fullscreenElement ? '⛶ 전체화면 종료' : '⛶ 전체화면';
+        });
+
+        // 엔진 이벤트 설정
+        function setupEngineEvents() {
+            engine.on('connected', () => {
+                statusText.textContent = '✅ 연결됨';
+                statusDiv.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+            });
+
+            engine.on('disconnected', () => {
+                statusText.textContent = '❌ 연결 끊김';
+                statusDiv.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                statsDiv.textContent = '0 kbps';
+            });
+
+            engine.on('error', (error) => {
+                statusText.textContent = '⚠️ 에러: ' + error.message;
+                statusDiv.className = 'status disconnected';
+                console.error('Engine error:', error);
+            });
+
+            engine.on('stats', (stats) => {
+                statsDiv.textContent = `${stats.bitrate.toFixed(1)} kbps`;
+                document.getElementById('packets').textContent =
+                    stats.packetsReceived.toLocaleString();
+                document.getElementById('bytes').textContent =
+                    (stats.bytesReceived / 1024 / 1024).toFixed(2) + ' MB';
+            });
+
+            engine.on('statechange', (state) => {
+                document.getElementById('connState').textContent = state;
+            });
+        }
+
+        // 페이지 언로드 시 정리
+        window.addEventListener('beforeunload', () => {
+            if (engine) {
+                engine.disconnect();
+            }
+        });
+    </script>
+</body>
+</html>
+

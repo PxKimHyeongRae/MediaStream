@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Mobile CCTV</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        video {
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            background: #000;
+        }
+
+        .overlay {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            border-radius: 24px;
+            font-size: 14px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transition: opacity 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 100;
+        }
+
+        .overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+
+        .overlay.connected .status-dot {
+            background: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .controls.visible {
+            opacity: 1;
+        }
+
+        .control-btn {
+            width: 48px;
+            height: 48px;
+            background: rgba(0,0,0,0.8);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .control-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* 로딩 스피너 */
+        .spinner {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            z-index: 99;
+        }
+
+        .spinner.hidden {
+            display: none;
+        }
+
+        @keyframes spin {
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        /* 에러 메시지 */
+        .error-message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(244, 67, 54, 0.9);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 101;
+            display: none;
+        }
+
+        .error-message.visible {
+            display: block;
+        }
+
+        .error-message button {
+            margin-top: 15px;
+            padding: 10px 20px;
+            background: white;
+            color: #f44336;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <video id="cctv" autoplay playsinline muted></video>
+
+    <div class="spinner" id="spinner"></div>
+
+    <div class="overlay" id="overlay">
+        <div class="status-dot"></div>
+        <span id="statusText">연결 중...</span>
+    </div>
+
+    <div class="controls" id="controls">
+        <button class="control-btn" id="muteBtn" title="음소거">🔇</button>
+        <button class="control-btn" id="reconnectBtn" title="재연결">🔄</button>
+    </div>
+
+    <div class="error-message" id="errorMessage">
+        <div id="errorText">연결 오류가 발생했습니다</div>
+        <button id="retryBtn">다시 시도</button>
+    </div>
+
+    <script src="/static/js/websocket-manager.js"></script>
+    <script src="/static/js/webrtc-engine.js"></script>
+    <script>
+        // URL에서 스트림 ID 가져오기
+        const urlParams = new URLSearchParams(window.location.search);
+        const streamId = urlParams.get('stream') || 'camera1';
+
+        // 엘리먼트 참조
+        const videoElement = document.getElementById('cctv');
+        const overlay = document.getElementById('overlay');
+        const statusText = document.getElementById('statusText');
+        const controls = document.getElementById('controls');
+        const muteBtn = document.getElementById('muteBtn');
+        const reconnectBtn = document.getElementById('reconnectBtn');
+        const spinner = document.getElementById('spinner');
+        const errorMessage = document.getElementById('errorMessage');
+        const errorText = document.getElementById('errorText');
+        const retryBtn = document.getElementById('retryBtn');
+
+        let engine = null;
+        let hideOverlayTimer = null;
+        let hideControlsTimer = null;
+
+        // WebRTC Engine 초기화
+        function initEngine() {
+            if (engine) {
+                engine.disconnect();
+            }
+
+            engine = new WebRTCEngine({
+                streamId: streamId,
+                videoElement: videoElement,
+                autoReconnect: true,
+                reconnectDelay: 3000
+            });
+
+            setupEngineEvents();
+            return engine;
+        }
+
+        // 엔진 이벤트 설정
+        function setupEngineEvents() {
+            engine.on('connected', () => {
+                statusText.textContent = `✅ ${streamId}`;
+                overlay.classList.add('connected');
+                spinner.classList.add('hidden');
+                errorMessage.classList.remove('visible');
+
+                // 3초 후 오버레이 숨기기
+                hideOverlayTimer = setTimeout(() => {
+                    overlay.classList.add('hidden');
+                }, 3000);
+            });
+
+            engine.on('disconnected', () => {
+                statusText.textContent = '연결 끊김';
+                overlay.classList.remove('connected', 'hidden');
+                spinner.classList.add('hidden');
+            });
+
+            engine.on('error', (error) => {
+                console.error('Engine error:', error);
+                statusText.textContent = '연결 오류';
+                overlay.classList.remove('connected', 'hidden');
+                spinner.classList.add('hidden');
+
+                // 에러 메시지 표시
+                errorText.textContent = error.message || '연결 오류가 발생했습니다';
+                errorMessage.classList.add('visible');
+            });
+
+            engine.on('stats', (stats) => {
+                if (!overlay.classList.contains('hidden')) {
+                    statusText.textContent = `${stats.bitrate.toFixed(0)} kbps`;
+                }
+            });
+
+            engine.on('statechange', (state) => {
+                if (state === 'connecting') {
+                    spinner.classList.remove('hidden');
+                    overlay.classList.remove('hidden');
+                    statusText.textContent = '연결 중...';
+                }
+            });
+        }
+
+        // 화면 터치로 오버레이/컨트롤 토글
+        let tapCount = 0;
+        let tapTimer = null;
+
+        document.body.addEventListener('click', (e) => {
+            // 버튼 클릭은 무시
+            if (e.target.tagName === 'BUTTON') return;
+
+            tapCount++;
+
+            if (tapCount === 1) {
+                // 단일 탭: 오버레이/컨트롤 토글
+                tapTimer = setTimeout(() => {
+                    toggleOverlay();
+                    tapCount = 0;
+                }, 300);
+            } else if (tapCount === 2) {
+                // 더블 탭: 전체화면 토글
+                clearTimeout(tapTimer);
+                toggleFullscreen();
+                tapCount = 0;
+            }
+        });
+
+        // 오버레이 토글
+        function toggleOverlay() {
+            const isHidden = overlay.classList.contains('hidden');
+
+            if (isHidden) {
+                overlay.classList.remove('hidden');
+                controls.classList.add('visible');
+
+                // 5초 후 자동 숨김
+                clearTimeout(hideOverlayTimer);
+                clearTimeout(hideControlsTimer);
+                hideOverlayTimer = setTimeout(() => {
+                    overlay.classList.add('hidden');
+                }, 5000);
+                hideControlsTimer = setTimeout(() => {
+                    controls.classList.remove('visible');
+                }, 5000);
+            } else {
+                overlay.classList.add('hidden');
+                controls.classList.remove('visible');
+            }
+        }
+
+        // 전체화면 토글
+        function toggleFullscreen() {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                if (videoElement.requestFullscreen) {
+                    videoElement.requestFullscreen();
+                } else if (videoElement.webkitRequestFullscreen) {
+                    videoElement.webkitRequestFullscreen();
+                } else if (videoElement.webkitEnterFullscreen) {
+                    videoElement.webkitEnterFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+            }
+        }
+
+        // 음소거 토글
+        muteBtn.addEventListener('click', () => {
+            videoElement.muted = !videoElement.muted;
+            muteBtn.textContent = videoElement.muted ? '🔇' : '🔊';
+        });
+
+        // 재연결
+        reconnectBtn.addEventListener('click', () => {
+            initEngine();
+            engine.connect();
+        });
+
+        // 에러 재시도
+        retryBtn.addEventListener('click', () => {
+            errorMessage.classList.remove('visible');
+            initEngine();
+            engine.connect();
+        });
+
+        // 화면 회전 감지
+        window.addEventListener('orientationchange', () => {
+            // 화면 회전 시 비디오 재조정
+            setTimeout(() => {
+                videoElement.style.width = '100vw';
+                videoElement.style.height = '100vh';
+            }, 100);
+        });
+
+        // 절전 모드 방지 (가능한 경우)
+        if ('wakeLock' in navigator) {
+            let wakeLock = null;
+
+            async function requestWakeLock() {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Wake Lock 활성화');
+                } catch (err) {
+                    console.error('Wake Lock 실패:', err);
+                }
+            }
+
+            requestWakeLock();
+
+            document.addEventListener('visibilitychange', () => {
+                if (wakeLock !== null && document.visibilityState === 'visible') {
+                    requestWakeLock();
+                }
+            });
+        }
+
+        // 초기 연결
+        initEngine();
+        engine.connect();
+
+        // 페이지 언로드 시 정리
+        window.addEventListener('beforeunload', () => {
+            if (engine) {
+                engine.disconnect();
+            }
+        });
+
+        // 페이지 포커스 복귀 시 재연결 확인
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && engine && !engine.isConnected()) {
+                console.log('페이지 활성화 - 재연결 시도');
+                engine.connect();
+            }
+        });
+    </script>
+</body>
+</html>
+
