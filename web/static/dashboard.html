@@ -392,9 +392,9 @@
         // 스트림 목록 로드
         async function loadStreams() {
             try {
-                const response = await fetch('/api/v1/streams');
+                const response = await fetch('/v3/config/paths/list');
                 const data = await response.json();
-                streams = data.streams;
+                streams = data.items;
 
                 totalStreamsEl.textContent = streams.length;
 
@@ -436,19 +436,19 @@
         function createCameraCard(stream) {
             const card = document.createElement('div');
             card.className = 'camera-card';
-            card.id = `camera-${stream.id}`;
+            card.id = `camera-${stream.name}`;
 
             card.innerHTML = `
                 <div class="camera-header">
-                    <div class="camera-title">${stream.id}</div>
+                    <div class="camera-title">${stream.name}</div>
                     <div class="camera-status">
-                        <div class="status-dot" id="status-${stream.id}"></div>
-                        <span id="status-text-${stream.id}">대기 중</span>
+                        <div class="status-dot" id="status-${stream.name}"></div>
+                        <span id="status-text-${stream.name}">대기 중</span>
                     </div>
                 </div>
                 <div class="camera-video-container">
-                    <video class="camera-video" id="video-${stream.id}" muted></video>
-                    <div class="camera-overlay" id="overlay-${stream.id}">
+                    <video class="camera-video" id="video-${stream.name}" muted></video>
+                    <div class="camera-overlay" id="overlay-${stream.name}">
                         <div class="spinner"></div>
                         <div>준비 중...</div>
                     </div>
@@ -456,21 +456,21 @@
                 <div class="camera-info">
                     <div class="info-item">
                         <div class="info-label">코덱</div>
-                        <div class="info-value" id="codec-${stream.id}">-</div>
+                        <div class="info-value" id="codec-${stream.name}">-</div>
                     </div>
                     <div class="info-item">
                         <div class="info-label">비트레이트</div>
-                        <div class="info-value" id="bitrate-${stream.id}">0 kbps</div>
+                        <div class="info-value" id="bitrate-${stream.name}">0 kbps</div>
                     </div>
                     <div class="info-item">
                         <div class="info-label">패킷</div>
-                        <div class="info-value" id="packets-${stream.id}">0</div>
+                        <div class="info-value" id="packets-${stream.name}">0</div>
                     </div>
                 </div>
                 <div class="camera-controls">
-                    <button onclick="connectCamera('${stream.id}')">연결</button>
-                    <button class="disconnect" onclick="disconnectCamera('${stream.id}')">해제</button>
-                    <button class="fullscreen-btn" onclick="toggleMute('${stream.id}')">🔇 음소거</button>
+                    <button onclick="connectCamera('${stream.name}')">연결</button>
+                    <button class="disconnect" onclick="disconnectCamera('${stream.name}')">해제</button>
+                    <button class="fullscreen-btn" onclick="toggleMute('${stream.name}')">🔇 음소거</button>
                 </div>
             `;
 
@@ -481,7 +481,7 @@
         async function connectAll() {
             console.log('Connecting all cameras...');
             for (const stream of streams) {
-                await connectCamera(stream.id);
+                await connectCamera(stream.name);
                 await new Promise(resolve => setTimeout(resolve, 500)); // 순차 연결
             }
         }
@@ -509,18 +509,10 @@
                     return;
                 }
 
-                const streamInfo = streams.find(s => s.id === streamId);
+                const streamInfo = streams.find(s => s.name === streamId);
                 if (!streamInfo) {
                     console.error(`Stream ${streamId} not found`);
                     return;
-                }
-
-                // 온디맨드 스트림 시작
-                if (streamInfo.onDemand && streamInfo.status === 'stopped') {
-                    console.log(`Starting on-demand stream: ${streamId}`);
-                    updateCameraStatus(streamId, 'connecting', '시작 중...');
-                    await fetch(`/api/v1/streams/${streamId}/start`, { method: 'POST' });
-                    await new Promise(resolve => setTimeout(resolve, 1500));
                 }
 
                 // WebRTC 연결
@@ -566,7 +558,7 @@
                 await engine.connect();
 
                 // 코덱 정보 가져오기
-                const response = await fetch(`/api/v1/streams/${streamId}`);
+                const response = await fetch(`/v3/config/paths/list`);
                 const info = await response.json();
                 document.getElementById(`codec-${streamId}`).textContent = info.codec || '알 수 없음';
 

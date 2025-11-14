@@ -8,20 +8,15 @@ server:
   # 프로덕션 모드 (false: 개발 모드)
   production: false
 
-# 카메라 스트림 설정
-paths:
-  plx_cctv_03:
-    source: rtsp://admin:live0416@192.168.10.53:554/Streaming/Channels/101
-    sourceOnDemand: yes
-    rtspTransport: tcp
-  plx_cctv_02:
-    source: rtsp://admin:live0416@192.168.10.54:554/profile2/media.smp
-    sourceOnDemand: yes
-    rtspTransport: tcp
-  plx_cctv_01:
-    source: rtsp://admin:live0416@192.168.10.55:554/Streaming/Channels/101
-    sourceOnDemand: no
-    rtspTransport: tcp
+# 외부 API 설정
+api:
+  # API 사용 활성화
+  enabled: true
+  # API 서버 주소
+  base_url: "http://192.168.10.181:8109"
+  # 인증 정보
+  username: "test"
+  password: "123456"
 
 rtsp:
   # RTSP 서버 설정 (ffmpeg publish/subscribe용)

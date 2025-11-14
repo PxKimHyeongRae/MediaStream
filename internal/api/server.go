@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yourusername/cctv3/internal/cctv"
 	"go.uber.org/zap"
 )
 
@@ -17,27 +18,25 @@ type Server struct {
 	port       int
 
 	// 핸들러
-	healthHandler       func() map[string]interface{}
-	streamsHandler      func() []map[string]interface{}
-	streamInfoHandler   func(streamID string) (map[string]interface{}, error)
-	startStreamHandler  func(streamID string) error
-	stopStreamHandler   func(streamID string) error
-	websocketHandler    func(http.ResponseWriter, *http.Request)
-	pathsHandler        *PathsHandler
+	healthHandler    func() map[string]interface{}
+	statsHandler     func() map[string]interface{}
+	websocketHandler func(http.ResponseWriter, *http.Request)
+	cctvManager      interface {
+		GetCCTVs() map[string]cctv.CCTVStream
+	}
 }
 
 // ServerConfig는 API 서버 설정
 type ServerConfig struct {
-	Port               int
-	Production         bool
-	Logger             *zap.Logger
-	HealthHandler      func() map[string]interface{}
-	StreamsHandler     func() []map[string]interface{}
-	StreamInfoHandler  func(streamID string) (map[string]interface{}, error)
-	StartStreamHandler func(streamID string) error
-	StopStreamHandler  func(streamID string) error
-	WebSocketHandler   func(http.ResponseWriter, *http.Request)
-	PathsHandler       *PathsHandler
+	Port             int
+	Production       bool
+	Logger           *zap.Logger
+	HealthHandler    func() map[string]interface{}
+	StatsHandler     func() map[string]interface{}
+	WebSocketHandler func(http.ResponseWriter, *http.Request)
+	CCTVManager      interface {
+		GetCCTVs() map[string]cctv.CCTVStream
+	}
 }
 
 // NewServer는 새로운 API 서버를 생성합니다
@@ -54,16 +53,13 @@ func NewServer(config ServerConfig) *Server {
 	router.Use(loggerMiddleware(config.Logger))
 
 	server := &Server{
-		logger:             config.Logger,
-		router:             router,
-		port:               config.Port,
-		healthHandler:      config.HealthHandler,
-		streamsHandler:     config.StreamsHandler,
-		streamInfoHandler:  config.StreamInfoHandler,
-		startStreamHandler: config.StartStreamHandler,
-		stopStreamHandler:  config.StopStreamHandler,
-		websocketHandler:   config.WebSocketHandler,
-		pathsHandler:       config.PathsHandler,
+		logger:           config.Logger,
+		router:           router,
+		port:             config.Port,
+		healthHandler:    config.HealthHandler,
+		statsHandler:     config.StatsHandler,
+		websocketHandler: config.WebSocketHandler,
+		cctvManager:      config.CCTVManager,
 	}
 
 	server.setupRoutes()
@@ -76,28 +72,19 @@ func (s *Server) setupRoutes() {
 	// Health check
 	s.router.GET("/health", s.handleHealth)
 
-	// API v1
+	// API v1 - simplified for external API integration
 	v1 := s.router.Group("/api/v1")
 	{
-		v1.GET("/streams", s.handleStreams)
-		v1.GET("/streams/:id", s.handleStreamInfo)
-		v1.POST("/streams/:id/start", s.handleStartStream)
-		v1.DELETE("/streams/:id", s.handleStopStream)
+		v1.GET("/health", s.handleHealth)
 		v1.GET("/stats", s.handleStats)
+	}
 
-		// Paths (동적 스트림 관리)
-		if s.pathsHandler != nil {
-			v1.GET("/paths", s.pathsHandler.GetAllPaths)
-			v1.GET("/paths/:id", s.pathsHandler.GetPath)
-			v1.POST("/paths", s.pathsHandler.AddPaths)
-			v1.PUT("/paths/:id", s.pathsHandler.UpdatePath)
-			v1.DELETE("/paths/:id", s.pathsHandler.DeletePath)
-		}
-
-		// Config schema
-		if s.pathsHandler != nil {
-			v1.GET("/config/schema", s.pathsHandler.GetConfigSchema)
-		}
+	// API v3 - mediaMTX style endpoints
+	v3 := s.router.Group("/v3/config/paths")
+	{
+		v3.GET("/list", s.handlePathsList)
+		v3.POST("/add/:name", s.handlePathAdd)
+		v3.DELETE("/delete/:name", s.handlePathDelete)
 	}
 
 	// WebSocket signaling
@@ -160,98 +147,104 @@ func (s *Server) handleHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, health)
 }
 
-// handleStreams는 스트림 목록을 반환합니다
-func (s *Server) handleStreams(c *gin.Context) {
-	var streams []map[string]interface{}
-
-	if s.streamsHandler != nil {
-		streams = s.streamsHandler()
-	} else {
-		streams = []map[string]interface{}{}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"streams": streams,
-	})
-}
-
-// handleStreamInfo는 특정 스트림 정보를 반환합니다
-func (s *Server) handleStreamInfo(c *gin.Context) {
-	streamID := c.Param("id")
-
-	if s.streamInfoHandler == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{
-			"error": "stream info handler not configured",
-		})
-		return
-	}
-
-	info, err := s.streamInfoHandler(streamID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, info)
-}
-
-// handleStartStream은 온디맨드 스트림을 시작합니다
-func (s *Server) handleStartStream(c *gin.Context) {
-	streamID := c.Param("id")
-
-	if s.startStreamHandler == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{
-			"error": "start stream handler not configured",
-		})
-		return
-	}
-
-	if err := s.startStreamHandler(streamID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "started",
-		"stream_id": streamID,
-	})
-}
-
-// handleStopStream은 스트림을 중지합니다
-func (s *Server) handleStopStream(c *gin.Context) {
-	streamID := c.Param("id")
-
-	if s.stopStreamHandler == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{
-			"error": "stop stream handler not configured",
-		})
-		return
-	}
-
-	if err := s.stopStreamHandler(streamID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "stopped",
-		"stream_id": streamID,
-	})
-}
-
 // handleStats는 서버 통계를 반환합니다
 func (s *Server) handleStats(c *gin.Context) {
-	// TODO: 실제 통계 수집
-	c.JSON(http.StatusOK, gin.H{
-		"uptime": "0h 0m 0s",
-		"streams": 0,
-		"clients": 0,
+	var stats map[string]interface{}
+
+	if s.statsHandler != nil {
+		stats = s.statsHandler()
+	} else {
+		stats = map[string]interface{}{
+			"uptime":  "0h 0m 0s",
+			"streams": 0,
+			"clients": 0,
+		}
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// handlePathsList는 mediaMTX 스타일의 paths 목록을 반환합니다
+func (s *Server) handlePathsList(c *gin.Context) {
+	if s.cctvManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "CCTV manager not available",
+		})
+		return
+	}
+
+	cctvs := s.cctvManager.GetCCTVs()
+
+	// mediaMTX 스타일 응답으로 변환
+	items := make([]gin.H, 0, len(cctvs))
+	for _, cctv := range cctvs {
+		items = append(items, gin.H{
+			"name":   cctv.Name,
+			"source": cctv.URL,
+		})
+	}
+
+	response := gin.H{
+		"pageCount": 1,
+		"itemCount": len(items),
+		"items":     items,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// handlePathAdd는 새로운 path를 추가합니다
+func (s *Server) handlePathAdd(c *gin.Context) {
+	pathName := c.Param("name")
+
+	if s.cctvManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "CCTV manager not available",
+		})
+		return
+	}
+
+	// 요청 바디 파싱
+	var request struct {
+		Source         string `json:"source" binding:"required"`
+		SourceOnDemand bool   `json:"sourceOnDemand"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	s.logger.Info("Path add requested",
+		zap.String("name", pathName),
+		zap.String("source", request.Source),
+		zap.Bool("sourceOnDemand", request.SourceOnDemand),
+	)
+
+	// 현재는 외부 API 기반이므로 실제 추가는 지원하지 않음
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error": "Path addition not supported in API-based mode",
+	})
+}
+
+// handlePathDelete는 path를 삭제합니다
+func (s *Server) handlePathDelete(c *gin.Context) {
+	pathName := c.Param("name")
+
+	if s.cctvManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "CCTV manager not available",
+		})
+		return
+	}
+
+	s.logger.Info("Path delete requested", zap.String("name", pathName))
+
+	// 현재는 외부 API 기반이므로 실제 삭제는 지원하지 않음
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error": "Path deletion not supported in API-based mode",
 	})
 }
 

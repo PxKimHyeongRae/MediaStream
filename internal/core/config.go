@@ -9,17 +9,27 @@ import (
 
 // Config는 전체 애플리케이션 설정을 담는 구조체
 type Config struct {
-	Server      ServerConfig          `yaml:"server"`
-	Paths       map[string]PathConfig `yaml:"paths"`
-	RTSP        RTSPConfig            `yaml:"rtsp"`
-	WebRTC      WebRTCConfig          `yaml:"webrtc"`
-	Media       MediaConfig           `yaml:"media"`
-	Logging     LoggingConfig         `yaml:"logging"`
-	Metrics     MetricsConfig         `yaml:"metrics"`
-	Performance PerformanceConfig     `yaml:"performance"`
+	Server ServerConfig `yaml:"server"`
+	// Paths removed - now using external API
+	API         APIConfig         `yaml:"api"`
+	RTSP        RTSPConfig        `yaml:"rtsp"`
+	WebRTC      WebRTCConfig      `yaml:"webrtc"`
+	Media       MediaConfig       `yaml:"media"`
+	Logging     LoggingConfig     `yaml:"logging"`
+	Metrics     MetricsConfig     `yaml:"metrics"`
+	Performance PerformanceConfig `yaml:"performance"`
 }
 
-// PathConfig는 mediaMTX 스타일 경로 설정
+// APIConfig는 외부 API 설정
+type APIConfig struct {
+	// API 서버 설정
+	Enabled  bool   `yaml:"enabled"`
+	BaseURL  string `yaml:"base_url"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// PathConfig는 mediaMTX 스타일 경로 설정 (내부용)
 type PathConfig struct {
 	// RTSP Source 설정
 	Source         string `yaml:"source" json:"source,omitempty"`
@@ -28,7 +38,7 @@ type PathConfig struct {
 
 	// RunOnDemand 설정 (외부 프로세스 실행, 예: ffmpeg 트랜스코딩)
 	RunOnDemand           string `yaml:"runOnDemand,omitempty" json:"runOnDemand,omitempty"`
-	RunOnDemandRestart    bool   `yaml:"runOnDemandRestart,omitempty" json:"runOnDemandRestart,omitempty"`
+	RunOnDemandRestart    bool   `yaml:"runOnDemandRestart,omitempty" json:"runOnDemandCloseAfter,omitempty"`
 	RunOnDemandCloseAfter string `yaml:"runOnDemandCloseAfter,omitempty" json:"runOnDemandCloseAfter,omitempty"`
 }
 
@@ -59,10 +69,10 @@ type TestStreamConfig struct {
 }
 
 type RTSPClientConfig struct {
-	Timeout       int  `yaml:"timeout"`
-	RetryCount    int  `yaml:"retry_count"`
-	RetryDelay    int  `yaml:"retry_delay"`
-	TCPTransport  bool `yaml:"tcp_transport"`
+	Timeout      int  `yaml:"timeout"`
+	RetryCount   int  `yaml:"retry_count"`
+	RetryDelay   int  `yaml:"retry_delay"`
+	TCPTransport bool `yaml:"tcp_transport"`
 }
 
 type RTSPPoolConfig struct {

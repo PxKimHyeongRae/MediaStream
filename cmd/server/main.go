@@ -14,6 +14,7 @@ import (
 
 	"github.com/pion/rtp"
 	"github.com/yourusername/cctv3/internal/api"
+	"github.com/yourusername/cctv3/internal/cctv"
 	"github.com/yourusername/cctv3/internal/core"
 	"github.com/yourusername/cctv3/internal/process"
 	"github.com/yourusername/cctv3/internal/rtsp"
@@ -85,6 +86,8 @@ func main() {
 		zap.Int("http_port", config.Server.HTTPPort),
 		zap.Int("ws_port", config.Server.WSPort),
 		zap.Bool("production", config.Server.Production),
+		zap.Bool("api_enabled", config.API.Enabled),
+		zap.String("api_url", config.API.BaseURL),
 		zap.Int("max_streams", config.RTSP.Pool.MaxStreams),
 		zap.Int("max_peers", config.WebRTC.Settings.MaxPeers),
 	)
@@ -98,9 +101,18 @@ func main() {
 
 	logger.Info("All components initialized successfully")
 
-	// Paths 설정에서 스트림 로드
-	if err := app.loadStreamsFromConfig(config); err != nil {
-		logger.Error("Failed to load streams from config", zap.Error(err))
+	// API 기반 CCTV 스트림 로드
+	if config.API.Enabled {
+		if err := app.cctvManager.Start(); err != nil {
+			logger.Error("Failed to start CCTV manager", zap.Error(err))
+		} else {
+			// CCTV 데이터로 스트림 로드
+			if err := app.loadStreamsFromCCTV(); err != nil {
+				logger.Error("Failed to load streams from CCTV", zap.Error(err))
+			}
+		}
+	} else {
+		logger.Warn("API is disabled, no streams will be loaded")
 	}
 
 	// 종료 시그널 대기
@@ -133,14 +145,14 @@ func maskRTSPURL(url string) string {
 // Application은 애플리케이션 컴포넌트들을 관리합니다
 type Application struct {
 	config          *core.Config
-	configStore     *core.ConfigStore
 	streamManager   *core.StreamManager
 	webrtcManager   *webrtc.Manager
 	signalingServer *signaling.Server
 	apiServer       *api.Server
 	processManager  *process.Manager
-	rtspClients     map[string]*rtsp.Client  // streamID -> RTSP client
-	rtspServer      *rtsp.ServerRTSP         // RTSP 서버 (ffmpeg publish/subscribe용)
+	cctvManager     *cctv.CCTVManager
+	rtspClients     map[string]*rtsp.Client // streamID -> RTSP client
+	rtspServer      *rtsp.ServerRTSP        // RTSP 서버 (ffmpeg publish/subscribe용)
 
 	// 피어와 스트림 매핑
 	peerStreams map[string]string // peerID -> streamID
@@ -164,13 +176,17 @@ func initializeApplication(config *core.Config) (*Application, error) {
 		cancelFunc:  cancel,
 	}
 
-	// 1. ConfigStore 초기화 (YAML + API 동적 설정)
-	app.configStore = core.NewConfigStore(
-		config.Paths,
-		"configs/runtime-paths.json",
-		logger.Log,
-	)
-	logger.Info("ConfigStore initialized")
+	// 1. CCTV Manager 초기화 (외부 API 연동)
+	if config.API.Enabled {
+		app.cctvManager = cctv.NewCCTVManager(cctv.Config{
+			APIURL:        config.API.BaseURL,
+			Username:      config.API.Username,
+			Password:      config.API.Password,
+			StreamManager: app.streamManager,
+			Logger:        logger.Log,
+		})
+		logger.Info("CCTV manager initialized")
+	}
 
 	// 2. ProcessManager 초기화 (runOnDemand 프로세스 관리)
 	app.processManager = process.NewManager(logger.Log)
@@ -206,14 +222,7 @@ func initializeApplication(config *core.Config) (*Application, error) {
 	})
 	logger.Info("Signaling server initialized")
 
-	// 6. PathsHandler 생성 (동적 스트림 관리 API)
-	pathsHandler := api.NewPathsHandler(
-		app.configStore,
-		app.streamManager,
-		app.processManager,
-		logger.Log,
-	)
-	logger.Info("PathsHandler initialized")
+	// 6. Skip PathsHandler (API 기반으로 변경)
 
 	// 7. API 서버 초기화
 	app.apiServer = api.NewServer(api.ServerConfig{
@@ -222,108 +231,58 @@ func initializeApplication(config *core.Config) (*Application, error) {
 		Logger:     logger.Log,
 		HealthHandler: func() map[string]interface{} {
 			return map[string]interface{}{
-				"status":    "ok",
-				"version":   version,
-				"streams":   len(app.rtspClients),
-				"clients":   app.signalingServer.GetClientCount(),
-				"peers":     app.webrtcManager.GetPeerCount(),
+				"status":  "ok",
+				"version": version,
+				"streams": len(app.rtspClients),
+				"clients": app.signalingServer.GetClientCount(),
+				"peers":   app.webrtcManager.GetPeerCount(),
 			}
 		},
-		StreamsHandler: func() []map[string]interface{} {
-			streams := []map[string]interface{}{}
+		StatsHandler: func() map[string]interface{} {
+			stats := map[string]interface{}{
+				"uptime":      "0h 0m 0s", // TODO: 실제 uptime 계산
+				"streams":     len(app.rtspClients),
+				"clients":     app.signalingServer.GetClientCount(),
+				"peers":       app.webrtcManager.GetPeerCount(),
+				"api_enabled": config.API.Enabled,
+			}
 
-			// ConfigStore에서 모든 paths를 순회
-			for streamID, pathConfig := range app.configStore.GetAllPaths() {
-				stream, err := app.streamManager.GetStream(streamID)
+			// API가 활성화된 경우 CCTV 정보 추가
+			if config.API.Enabled && app.cctvManager != nil {
+				cctvs := app.cctvManager.GetCCTVs()
+				stats["cctvs"] = len(cctvs)
 
-				streamInfo := map[string]interface{}{
-					"id":       streamID,
-					"onDemand": pathConfig.SourceOnDemand,
-				}
-
-				// source 또는 runOnDemand 정보 추가
-				if pathConfig.Source != "" {
-					streamInfo["source"] = maskRTSPURL(pathConfig.Source)
-					streamInfo["type"] = "rtsp"
-				} else if pathConfig.RunOnDemand != "" {
-					streamInfo["runOnDemand"] = true
-					streamInfo["type"] = "external"
-				}
-
-				// RTSP 클라이언트가 실행 중인지 확인
-				if _, isRunning := app.rtspClients[streamID]; isRunning {
-					streamInfo["status"] = "running"
-					if err == nil {
-						streamInfo["codec"] = stream.GetVideoCodec()
-						streamInfo["subscribers"] = stream.GetSubscriberCount()
+				// CCTV 목록 추가
+				cctvList := make([]map[string]interface{}, 0, len(cctvs))
+				for streamID, cctv := range cctvs {
+					cctvInfo := map[string]interface{}{
+						"id":             streamID,
+						"name":           cctv.Name,
+						"sourceOnDemand": cctv.SourceOnDemand,
 					}
-				} else if app.processManager.IsRunning(streamID) {
-					streamInfo["status"] = "running"
-					if err == nil {
-						streamInfo["codec"] = stream.GetVideoCodec()
-						streamInfo["subscribers"] = stream.GetSubscriberCount()
+
+					// RTSP 클라이언트 상태 확인
+					if _, isRunning := app.rtspClients[streamID]; isRunning {
+						cctvInfo["status"] = "running"
+						if stream, err := app.streamManager.GetStream(streamID); err == nil {
+							cctvInfo["codec"] = stream.GetVideoCodec()
+							cctvInfo["subscribers"] = stream.GetSubscriberCount()
+						}
+					} else {
+						cctvInfo["status"] = "stopped"
+						cctvInfo["codec"] = nil
+						cctvInfo["subscribers"] = 0
 					}
-				} else {
-					streamInfo["status"] = "stopped"
-					streamInfo["codec"] = nil
-					streamInfo["subscribers"] = 0
+
+					cctvList = append(cctvList, cctvInfo)
 				}
-
-				streams = append(streams, streamInfo)
-			}
-			return streams
-		},
-		StreamInfoHandler: func(streamID string) (map[string]interface{}, error) {
-			// ConfigStore에서 path 찾기
-			pathConfig, exists := app.configStore.GetPath(streamID)
-			if !exists {
-				return nil, fmt.Errorf("stream %s not found", streamID)
+				stats["cctv_list"] = cctvList
 			}
 
-			stream, err := app.streamManager.GetStream(streamID)
-			if err != nil {
-				return nil, err
-			}
-
-			info := map[string]interface{}{
-				"id":       streamID,
-				"onDemand": pathConfig.SourceOnDemand,
-			}
-
-			// source 또는 runOnDemand 정보 추가
-			if pathConfig.Source != "" {
-				info["source"] = maskRTSPURL(pathConfig.Source)
-				info["type"] = "rtsp"
-			} else if pathConfig.RunOnDemand != "" {
-				info["runOnDemand"] = true
-				info["type"] = "external"
-			}
-
-			// RTSP 클라이언트 또는 외부 프로세스 상태 확인
-			if _, isRunning := app.rtspClients[streamID]; isRunning {
-				info["status"] = "running"
-				info["codec"] = stream.GetVideoCodec()
-				info["subscribers"] = stream.GetSubscriberCount()
-			} else if app.processManager.IsRunning(streamID) {
-				info["status"] = "running"
-				info["codec"] = stream.GetVideoCodec()
-				info["subscribers"] = stream.GetSubscriberCount()
-			} else {
-				info["status"] = "stopped"
-				info["codec"] = nil
-				info["subscribers"] = 0
-			}
-
-			return info, nil
-		},
-		StartStreamHandler: func(streamID string) error {
-			return app.startOnDemandStream(streamID)
-		},
-		StopStreamHandler: func(streamID string) error {
-			return app.stopStream(streamID)
+			return stats
 		},
 		WebSocketHandler: app.signalingServer.HandleWebSocket,
-		PathsHandler:     pathsHandler,
+		CCTVManager:      app.cctvManager,
 	})
 
 	// API 서버 시작
@@ -365,13 +324,13 @@ func (app *Application) addStream(streamID, rtspURL string) error {
 
 	// RTSP 클라이언트 생성
 	client, err := rtsp.NewClient(rtsp.ClientConfig{
-		URL:          rtspURL,
-		Transport:    "tcp",
-		Timeout:      time.Duration(app.config.RTSP.Client.Timeout) * time.Second,
-		RetryCount:   app.config.RTSP.Client.RetryCount,
-		RetryDelay:   time.Duration(app.config.RTSP.Client.RetryDelay) * time.Second,
-		Logger:       logger.Log,
-		Stream:       stream, // Stream 참조 전달 (코덱 설정용)
+		URL:        rtspURL,
+		Transport:  "tcp",
+		Timeout:    time.Duration(app.config.RTSP.Client.Timeout) * time.Second,
+		RetryCount: app.config.RTSP.Client.RetryCount,
+		RetryDelay: time.Duration(app.config.RTSP.Client.RetryDelay) * time.Second,
+		Logger:     logger.Log,
+		Stream:     stream, // Stream 참조 전달 (코덱 설정용)
 		OnPacket: func(pkt *rtp.Packet) {
 			// RTP 패킷을 스트림에 전달
 			if err := stream.WritePacket(pkt); err != nil {
@@ -416,7 +375,13 @@ func (app *Application) cleanup() {
 		logger.Info("Context cancelled")
 	}
 
-	// 2. 모든 외부 프로세스 중지
+	// 2. CCTV Manager 중지
+	if app.cctvManager != nil {
+		app.cctvManager.Stop()
+		logger.Info("CCTV manager stopped")
+	}
+
+	// 3. 모든 외부 프로세스 중지
 	if app.processManager != nil {
 		app.processManager.StopAll()
 		logger.Info("All external processes stopped")
@@ -472,6 +437,24 @@ func (app *Application) handleWebRTCOffer(offer string, streamID string, client 
 			zap.Error(err),
 		)
 		return "", fmt.Errorf("stream not found: %w", err)
+	}
+
+	// 스트림이 실행 중이 아니면 온디맨드로 시작 시도
+	if _, isRunning := app.rtspClients[streamID]; !isRunning {
+		logger.Info("Stream not running, attempting to start on-demand",
+			zap.String("stream_id", streamID),
+		)
+
+		if err := app.startOnDemandStream(streamID); err != nil {
+			logger.Error("Failed to start on-demand stream",
+				zap.String("stream_id", streamID),
+				zap.Error(err),
+			)
+			return "", fmt.Errorf("failed to start stream: %w", err)
+		}
+
+		// 잠시 대기하여 RTSP 연결이 안정화되도록 함
+		time.Sleep(2 * time.Second)
 	}
 
 	// WebRTC 피어 생성
@@ -560,68 +543,36 @@ func (app *Application) cleanupClientPeers(clientID string) {
 	// 현재는 WebRTC 피어 연결 상태 변화에서 자동으로 정리됨
 }
 
-// loadStreamsFromConfig는 설정 파일에서 paths를 읽어 스트림을 로드합니다
-func (app *Application) loadStreamsFromConfig(config *core.Config) error {
-	allPaths := app.configStore.GetAllPaths()
-	logger.Info("Loading streams from ConfigStore", zap.Int("path_count", len(allPaths)))
+// loadStreamsFromCCTV는 CCTV 매니저에서 스트림을 로드합니다
+func (app *Application) loadStreamsFromCCTV() error {
+	if app.cctvManager == nil {
+		return fmt.Errorf("CCTV manager not initialized")
+	}
 
-	for streamID, pathConfig := range allPaths {
-		// runOnDemand 경로 처리
-		if pathConfig.RunOnDemand != "" {
-			logger.Info("Processing runOnDemand path",
-				zap.String("stream_id", streamID),
-				zap.Bool("restart", pathConfig.RunOnDemandRestart),
-				zap.String("closeAfter", pathConfig.RunOnDemandCloseAfter),
-			)
+	cctvs := app.cctvManager.GetCCTVs()
+	logger.Info("Loading streams from CCTV manager", zap.Int("cctv_count", len(cctvs)))
 
-			// 스트림만 생성 (프로세스는 첫 클라이언트 요청 시 시작)
-			if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
-				logger.Error("Failed to create runOnDemand stream",
-					zap.String("stream_id", streamID),
-					zap.Error(err),
-				)
-				continue
-			}
-			logger.Info("Stream created (runOnDemand)",
+	for streamID, cctv := range cctvs {
+		logger.Info("Processing CCTV stream",
+			zap.String("stream_id", streamID),
+			zap.String("name", cctv.Name),
+			zap.String("url", maskRTSPURL(cctv.URL)),
+			zap.Bool("on_demand", cctv.SourceOnDemand),
+		)
+
+		// 모든 CCTV 스트림은 온디맨드로 처리 (API 기반이므로)
+		if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
+			logger.Error("Failed to create CCTV stream",
 				zap.String("stream_id", streamID),
+				zap.Error(err),
 			)
 			continue
 		}
 
-		// RTSP source 경로 처리
-		if pathConfig.Source != "" {
-			logger.Info("Processing RTSP path",
-				zap.String("stream_id", streamID),
-				zap.String("source", maskRTSPURL(pathConfig.Source)),
-				zap.Bool("on_demand", pathConfig.SourceOnDemand),
-			)
-
-			// sourceOnDemand가 false인 경우에만 즉시 연결
-			if !pathConfig.SourceOnDemand {
-				if err := app.addStream(streamID, pathConfig.Source); err != nil {
-					logger.Error("Failed to add stream",
-						zap.String("stream_id", streamID),
-						zap.Error(err),
-					)
-					continue
-				}
-				logger.Info("Stream started (always-on)",
-					zap.String("stream_id", streamID),
-				)
-			} else {
-				// 온디맨드 스트림은 스트림만 생성하고 RTSP 연결은 하지 않음
-				if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
-					logger.Error("Failed to create on-demand stream",
-						zap.String("stream_id", streamID),
-						zap.Error(err),
-					)
-					continue
-				}
-				logger.Info("Stream created (on-demand)",
-					zap.String("stream_id", streamID),
-				)
-			}
-		}
+		logger.Info("CCTV stream created (on-demand)",
+			zap.String("stream_id", streamID),
+			zap.String("name", cctv.Name),
+		)
 	}
 
 	return nil
@@ -629,10 +580,14 @@ func (app *Application) loadStreamsFromConfig(config *core.Config) error {
 
 // startOnDemandStream은 온디맨드 스트림을 시작합니다
 func (app *Application) startOnDemandStream(streamID string) error {
-	// ConfigStore에서 path 찾기
-	pathConfig, exists := app.configStore.GetPath(streamID)
-	if !exists {
-		return fmt.Errorf("stream %s not found in config", streamID)
+	// CCTV Manager에서 stream config 찾기
+	if app.cctvManager == nil {
+		return fmt.Errorf("CCTV manager not initialized")
+	}
+
+	pathConfig, err := app.cctvManager.GetStreamConfig(streamID)
+	if err != nil {
+		return fmt.Errorf("stream %s not found in CCTV manager: %w", streamID, err)
 	}
 
 	// 스트림이 이미 존재하는지 확인
@@ -641,96 +596,63 @@ func (app *Application) startOnDemandStream(streamID string) error {
 		return fmt.Errorf("stream not found: %w", err)
 	}
 
-	// runOnDemand 프로세스 시작
-	if pathConfig.RunOnDemand != "" {
-		// 이미 프로세스가 실행 중인지 확인
-		if app.processManager.IsRunning(streamID) {
-			logger.Info("RunOnDemand process already running", zap.String("stream_id", streamID))
-			return nil
-		}
-
-		// closeAfter 파싱
-		closeAfter, err := parseDuration(pathConfig.RunOnDemandCloseAfter)
-		if err != nil {
-			logger.Warn("Invalid runOnDemandCloseAfter, using default 10s",
-				zap.String("stream_id", streamID),
-				zap.String("value", pathConfig.RunOnDemandCloseAfter),
-			)
-			closeAfter = 10 * time.Second
-		}
-
-		// 프로세스 시작
-		if err := app.processManager.Start(
-			streamID,
-			pathConfig.RunOnDemand,
-			pathConfig.RunOnDemandRestart,
-			closeAfter,
-		); err != nil {
-			return fmt.Errorf("failed to start runOnDemand process: %w", err)
-		}
-
-		logger.Info("RunOnDemand process started", zap.String("stream_id", streamID))
+	// 이미 RTSP 클라이언트가 있는지 확인
+	if _, exists := app.rtspClients[streamID]; exists {
+		logger.Info("RTSP stream already running", zap.String("stream_id", streamID))
 		return nil
 	}
 
-	// RTSP source 시작
-	if pathConfig.Source != "" {
-		// 이미 RTSP 클라이언트가 있는지 확인
-		if _, exists := app.rtspClients[streamID]; exists {
-			logger.Info("RTSP stream already running", zap.String("stream_id", streamID))
-			return nil
-		}
+	// Transport 기본값 설정
+	transport := pathConfig.RTSPTransport
+	if transport == "" {
+		transport = "tcp"
+	}
 
-		// Transport 기본값 설정
-		transport := pathConfig.RTSPTransport
-		if transport == "" {
-			transport = "tcp"
-		}
-
-		// RTSP 클라이언트 생성하고 시작
-		client, err := rtsp.NewClient(rtsp.ClientConfig{
-			URL:          pathConfig.Source,
-			Transport:    transport,
-			Timeout:      time.Duration(app.config.RTSP.Client.Timeout) * time.Second,
-			RetryCount:   app.config.RTSP.Client.RetryCount,
-			RetryDelay:   time.Duration(app.config.RTSP.Client.RetryDelay) * time.Second,
-			Logger:       logger.Log,
-			Stream:       stream,
-			OnPacket: func(pkt *rtp.Packet) {
-				if err := stream.WritePacket(pkt); err != nil {
-					logger.Error("Failed to write packet to stream",
-						zap.String("stream_id", streamID),
-						zap.Error(err),
-					)
-				}
-			},
-			OnConnect: func() {
-				logger.Info("RTSP client connected", zap.String("stream_id", streamID))
-			},
-			OnDisconnect: func(err error) {
-				logger.Warn("RTSP client disconnected",
+	// RTSP 클라이언트 생성하고 시작
+	client, err := rtsp.NewClient(rtsp.ClientConfig{
+		URL:        pathConfig.Source,
+		Transport:  transport,
+		Timeout:    time.Duration(app.config.RTSP.Client.Timeout) * time.Second,
+		RetryCount: app.config.RTSP.Client.RetryCount,
+		RetryDelay: time.Duration(app.config.RTSP.Client.RetryDelay) * time.Second,
+		Logger:     logger.Log,
+		Stream:     stream,
+		OnPacket: func(pkt *rtp.Packet) {
+			if err := stream.WritePacket(pkt); err != nil {
+				logger.Error("Failed to write packet to stream",
 					zap.String("stream_id", streamID),
 					zap.Error(err),
 				)
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create RTSP client: %w", err)
-		}
-
-		// RTSP 클라이언트 시작
-		if err := client.Start(); err != nil {
-			return fmt.Errorf("failed to start RTSP client: %w", err)
-		}
-
-		// map에 저장
-		app.rtspClients[streamID] = client
-
-		logger.Info("On-demand RTSP stream started", zap.String("stream_id", streamID))
-		return nil
+			}
+		},
+		OnConnect: func() {
+			logger.Info("RTSP client connected", zap.String("stream_id", streamID))
+		},
+		OnDisconnect: func(err error) {
+			logger.Warn("RTSP client disconnected",
+				zap.String("stream_id", streamID),
+				zap.Error(err),
+			)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create RTSP client: %w", err)
 	}
 
-	return fmt.Errorf("stream %s has neither source nor runOnDemand", streamID)
+	// RTSP 클라이언트 시작
+	if err := client.Start(); err != nil {
+		return fmt.Errorf("failed to start RTSP client: %w", err)
+	}
+
+	// map에 저장
+	app.rtspClients[streamID] = client
+
+	logger.Info("On-demand RTSP stream started",
+		zap.String("stream_id", streamID),
+		zap.String("url", maskRTSPURL(pathConfig.Source)),
+	)
+
+	return nil
 }
 
 // parseDuration은 문자열을 time.Duration으로 파싱합니다
