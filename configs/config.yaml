@@ -10,20 +10,16 @@ server:
 
 # 카메라 스트림 설정
 paths:
-  park_cctv_01:
-    source: rtsp://121.190.36.211:1031
-    sourceOnDemand: yes
-    rtspTransport: tcp
   plx_cctv_03:
-    source: rtsp://admin:pluxity123%21%40%23@192.168.4.46:554/Streaming/Channels/101
+    source: rtsp://admin:live0416@192.168.10.53:554/Streaming/Channels/101
     sourceOnDemand: yes
     rtspTransport: tcp
   plx_cctv_02:
-    source: rtsp://admin:1q2w3e4r%21@192.168.4.54:554/profile2/media.smp
+    source: rtsp://admin:live0416@192.168.10.54:554/profile2/media.smp
     sourceOnDemand: yes
     rtspTransport: tcp
   plx_cctv_01:
-    source: rtsp://admin:live0416@192.168.4.121:554/Streaming/Channels/101
+    source: rtsp://admin:live0416@192.168.10.55:554/Streaming/Channels/101
     sourceOnDemand: no
     rtspTransport: tcp
 

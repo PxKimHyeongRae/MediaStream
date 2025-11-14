@@ -8,7 +8,8 @@ services:
       args:
         - GO_VERSION=1.23
     image: media-server:latest
-    container_name: rtsp-webrtc-server
+    container_name: media-server
+    network_mode: host
     ports:
       - "${MEDIASTREAM_HTTP_PORT}:${MEDIASTREAM_HTTP_PORT}"
       - "${MEDIASTREAM_WS_PORT}:${MEDIASTREAM_WS_PORT}"
@@ -25,8 +26,6 @@ services:
       - TZ=${TZ:-Asia/Seoul}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     restart: unless-stopped
-    networks:
-      - media-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
@@ -38,7 +37,3 @@ volumes:
   media-logs:
   prometheus-data:
   grafana-data:
-
-networks:
-  media-network:
-    driver: bridge
