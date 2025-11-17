@@ -21,9 +21,7 @@ type Server struct {
 	healthHandler    func() map[string]interface{}
 	statsHandler     func() map[string]interface{}
 	websocketHandler func(http.ResponseWriter, *http.Request)
-	cctvManager      interface {
-		GetCCTVs() map[string]cctv.CCTVStream
-	}
+	cctvManager      cctv.Provider
 }
 
 // ServerConfig는 API 서버 설정
@@ -34,9 +32,7 @@ type ServerConfig struct {
 	HealthHandler    func() map[string]interface{}
 	StatsHandler     func() map[string]interface{}
 	WebSocketHandler func(http.ResponseWriter, *http.Request)
-	CCTVManager      interface {
-		GetCCTVs() map[string]cctv.CCTVStream
-	}
+	CCTVManager      cctv.Provider
 }
 
 // NewServer는 새로운 API 서버를 생성합니다
@@ -77,6 +73,7 @@ func (s *Server) setupRoutes() {
 	{
 		v1.GET("/health", s.handleHealth)
 		v1.GET("/stats", s.handleStats)
+		v1.POST("/sync", s.handleSync)
 	}
 
 	// API v3 - mediaMTX style endpoints
@@ -162,6 +159,35 @@ func (s *Server) handleStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+// handleSync는 CCTV 목록 수동 동기화를 처리합니다
+func (s *Server) handleSync(c *gin.Context) {
+	if s.cctvManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "CCTV manager not available",
+		})
+		return
+	}
+
+	s.logger.Info("Manual sync requested")
+
+	if err := s.cctvManager.ManualSync(); err != nil {
+		s.logger.Error("Manual sync failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Sync failed: " + err.Error(),
+		})
+		return
+	}
+
+	// 동기화 완료 후 업데이트된 CCTV 목록 반환
+	cctvs := s.cctvManager.GetCCTVs()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "CCTV list synchronized successfully",
+		"count":   len(cctvs),
+	})
 }
 
 // handlePathsList는 mediaMTX 스타일의 paths 목록을 반환합니다

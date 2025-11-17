@@ -34,6 +34,7 @@ docs/
 
 # Docker
 docker/
+!docker/entrypoint.sh
 Dockerfile
 docker-compose*.yml
 .dockerignore

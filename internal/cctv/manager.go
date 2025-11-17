@@ -3,6 +3,7 @@ package cctv
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,9 +19,9 @@ type CCTVManager struct {
 	logger        *zap.Logger
 
 	// Configuration
-	apiURL   string
-	username string
-	password string
+	username          string
+	password          string
+	requestTimeoutSec int
 
 	// State
 	cctvs map[string]CCTVStream
@@ -42,34 +43,43 @@ type CCTVStream struct {
 
 // Config holds the configuration for CCTVManager
 type Config struct {
-	APIURL        string
-	Username      string
-	Password      string
-	StreamManager *core.StreamManager
-	Logger        *zap.Logger
+	APIURL            string
+	Username          string
+	Password          string
+	StreamManager     *core.StreamManager
+	Logger            *zap.Logger
+	RequestTimeoutSec int // API 요청 타임아웃 (초)
 }
 
 // NewCCTVManager creates a new CCTV manager
 func NewCCTVManager(config Config) *CCTVManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Set default values if not provided
+	requestTimeout := config.RequestTimeoutSec
+	if requestTimeout == 0 {
+		requestTimeout = 30 // 30 seconds default
+	}
+
+	apiClient := client.NewAPIClient(config.APIURL)
+	apiClient.SetRequestTimeout(time.Duration(requestTimeout) * time.Second)
+
 	return &CCTVManager{
-		apiClient:     client.NewAPIClient(config.APIURL),
-		streamManager: config.StreamManager,
-		logger:        config.Logger,
-		apiURL:        config.APIURL,
-		username:      config.Username,
-		password:      config.Password,
-		cctvs:         make(map[string]CCTVStream),
-		ctx:           ctx,
-		cancel:        cancel,
+		apiClient:         apiClient,
+		streamManager:     config.StreamManager,
+		logger:            config.Logger,
+		username:          config.Username,
+		password:          config.Password,
+		requestTimeoutSec: requestTimeout,
+		cctvs:             make(map[string]CCTVStream),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 }
 
 // Start initializes the CCTV manager by authenticating and syncing data
 func (m *CCTVManager) Start() error {
 	m.logger.Info("Starting CCTV manager",
-		zap.String("api_url", m.apiURL),
 		zap.String("username", m.username),
 	)
 
@@ -97,8 +107,11 @@ func (m *CCTVManager) Start() error {
 		zap.Int("total_cctvs", len(m.cctvs)),
 	)
 
-	// Start periodic sync
-	go m.periodicSync()
+	//if you want to enable periodic sync, uncomment below
+	// go m.periodicSync()
+
+	// Note: Sync is now manual only via API endpoint
+	m.logger.Info("Periodic sync disabled - use /api/v1/sync endpoint for manual sync")
 
 	return nil
 }
@@ -113,7 +126,7 @@ func (m *CCTVManager) Stop() {
 
 // authenticate performs authentication with the external API
 func (m *CCTVManager) authenticate() error {
-	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(m.ctx, time.Duration(m.requestTimeoutSec)*time.Second)
 	defer cancel()
 
 	return m.apiClient.SignIn(ctx, m.username, m.password)
@@ -121,7 +134,8 @@ func (m *CCTVManager) authenticate() error {
 
 // syncCCTVs triggers the CCTV synchronization process
 func (m *CCTVManager) syncCCTVs() error {
-	ctx, cancel := context.WithTimeout(m.ctx, 60*time.Second) // Give more time for sync
+	// Give more time for sync (2x request timeout)
+	ctx, cancel := context.WithTimeout(m.ctx, time.Duration(m.requestTimeoutSec*2)*time.Second)
 	defer cancel()
 
 	return m.apiClient.SyncCCTVs(ctx)
@@ -129,7 +143,7 @@ func (m *CCTVManager) syncCCTVs() error {
 
 // fetchCCTVs retrieves and updates the CCTV list
 func (m *CCTVManager) fetchCCTVs() error {
-	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(m.ctx, time.Duration(m.requestTimeoutSec)*time.Second)
 	defer cancel()
 
 	cctvs, err := m.apiClient.GetCCTVs(ctx)
@@ -165,41 +179,33 @@ func (m *CCTVManager) fetchCCTVs() error {
 	return nil
 }
 
-// periodicSync runs periodic synchronization
-func (m *CCTVManager) periodicSync() {
-	ticker := time.NewTicker(5 * time.Minute) // Sync every 5 minutes
-	defer ticker.Stop()
+// ManualSync performs manual synchronization (called via API endpoint)
+func (m *CCTVManager) ManualSync() error {
+	m.logger.Info("Starting manual CCTV sync")
 
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-			m.logger.Info("Starting periodic CCTV sync")
-
-			// Re-authenticate if needed
-			if err := m.authenticate(); err != nil {
-				m.logger.Error("Periodic authentication failed", zap.Error(err))
-				continue
-			}
-
-			// Sync CCTVs
-			if err := m.syncCCTVs(); err != nil {
-				m.logger.Error("Periodic CCTV sync failed", zap.Error(err))
-				continue
-			}
-
-			// Fetch updated list
-			if err := m.fetchCCTVs(); err != nil {
-				m.logger.Error("Failed to fetch updated CCTV list", zap.Error(err))
-				continue
-			}
-
-			m.logger.Info("Periodic sync completed",
-				zap.Int("total_cctvs", len(m.cctvs)),
-			)
-		}
+	// Re-authenticate if needed
+	if err := m.authenticate(); err != nil {
+		m.logger.Error("Manual authentication failed", zap.Error(err))
+		return fmt.Errorf("authentication failed: %w", err)
 	}
+
+	// Sync CCTVs
+	if err := m.syncCCTVs(); err != nil {
+		m.logger.Error("Manual CCTV sync failed", zap.Error(err))
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	// Fetch updated list
+	if err := m.fetchCCTVs(); err != nil {
+		m.logger.Error("Failed to fetch updated CCTV list", zap.Error(err))
+		return fmt.Errorf("fetch failed: %w", err)
+	}
+
+	m.logger.Info("Manual sync completed",
+		zap.Int("total_cctvs", len(m.cctvs)),
+	)
+
+	return nil
 }
 
 // GetCCTVs returns the current list of CCTV streams
@@ -242,10 +248,38 @@ func (m *CCTVManager) GetStreamConfig(streamID string) (*core.PathConfig, error)
 }
 
 // maskURL masks sensitive information in URLs for logging
-func (m *CCTVManager) maskURL(url string) string {
-	// Simple masking - in production, you might want more sophisticated masking
-	if len(url) > 20 {
-		return url[:10] + "***" + url[len(url)-10:]
+func (m *CCTVManager) maskURL(urlStr string) string {
+	// rtsp://user:pass@host:port/path 형식에서 pass 부분만 마스킹
+	if len(urlStr) < 8 {
+		return "***"
 	}
-	return "***"
+
+	// 프로토콜 찾기
+	protocolEnd := 0
+	if idx := strings.Index(urlStr, "://"); idx != -1 {
+		protocolEnd = idx + 3
+	} else {
+		return "***"
+	}
+
+	// @ 기호 찾기 (credential이 있는 경우)
+	atIdx := strings.Index(urlStr[protocolEnd:], "@")
+	if atIdx == -1 {
+		// credential이 없는 경우 그대로 반환
+		return urlStr
+	}
+
+	// credential 부분 파싱
+	credentials := urlStr[protocolEnd : protocolEnd+atIdx]
+	colonIdx := strings.Index(credentials, ":")
+	if colonIdx == -1 {
+		// 비밀번호가 없는 경우
+		return urlStr
+	}
+
+	// 비밀번호 부분만 마스킹
+	username := credentials[:colonIdx]
+	restOfURL := urlStr[protocolEnd+atIdx:]
+
+	return urlStr[:protocolEnd] + username + ":***" + restOfURL
 }

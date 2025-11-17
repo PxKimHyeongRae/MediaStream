@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -62,7 +63,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
-	defer logger.Sync()
+	defer logger.Close()
 
 	// 시작 로그
 	logger.Info("Starting RTSP to WebRTC Media Server",
@@ -136,10 +137,41 @@ func main() {
 }
 
 // maskRTSPURL은 RTSP URL의 비밀번호를 마스킹합니다
-func maskRTSPURL(url string) string {
-	// rtsp://user:pass@host:port/path 형식에서 pass 부분 마스킹
-	// 간단한 구현으로 전체 credential 마스킹
-	return "rtsp://***:***@<masked>"
+func maskRTSPURL(urlStr string) string {
+	// rtsp://user:pass@host:port/path 형식에서 pass 부분만 마스킹
+	// URL 파싱을 시도하여 credential만 마스킹
+	if len(urlStr) < 8 {
+		return "***"
+	}
+
+	// rtsp:// 또는 http:// 프로토콜 찾기
+	protocolEnd := 0
+	if idx := strings.Index(urlStr, "://"); idx != -1 {
+		protocolEnd = idx + 3
+	} else {
+		return "***"
+	}
+
+	// @ 기호 찾기 (credential이 있는 경우)
+	atIdx := strings.Index(urlStr[protocolEnd:], "@")
+	if atIdx == -1 {
+		// credential이 없는 경우 그대로 반환
+		return urlStr
+	}
+
+	// credential 부분 파싱
+	credentials := urlStr[protocolEnd : protocolEnd+atIdx]
+	colonIdx := strings.Index(credentials, ":")
+	if colonIdx == -1 {
+		// 비밀번호가 없는 경우
+		return urlStr
+	}
+
+	// 비밀번호 부분만 마스킹
+	username := credentials[:colonIdx]
+	restOfURL := urlStr[protocolEnd+atIdx:]
+
+	return urlStr[:protocolEnd] + username + ":***" + restOfURL
 }
 
 // Application은 애플리케이션 컴포넌트들을 관리합니다
@@ -176,25 +208,26 @@ func initializeApplication(config *core.Config) (*Application, error) {
 		cancelFunc:  cancel,
 	}
 
-	// 1. CCTV Manager 초기화 (외부 API 연동)
-	if config.API.Enabled {
-		app.cctvManager = cctv.NewCCTVManager(cctv.Config{
-			APIURL:        config.API.BaseURL,
-			Username:      config.API.Username,
-			Password:      config.API.Password,
-			StreamManager: app.streamManager,
-			Logger:        logger.Log,
-		})
-		logger.Info("CCTV manager initialized")
-	}
+	// 1. 스트림 관리자 초기화 (먼저 초기화해야 함)
+	app.streamManager = core.NewStreamManager(logger.Log)
+	logger.Info("Stream manager initialized")
 
 	// 2. ProcessManager 초기화 (runOnDemand 프로세스 관리)
 	app.processManager = process.NewManager(logger.Log)
 	logger.Info("ProcessManager initialized")
 
-	// 3. 스트림 관리자 초기화
-	app.streamManager = core.NewStreamManager(logger.Log)
-	logger.Info("Stream manager initialized")
+	// 3. CCTV Manager 초기화 (외부 API 연동) - StreamManager가 필요
+	if config.API.Enabled {
+		app.cctvManager = cctv.NewCCTVManager(cctv.Config{
+			APIURL:            config.API.BaseURL,
+			Username:          config.API.Username,
+			Password:          config.API.Password,
+			StreamManager:     app.streamManager,
+			Logger:            logger.Log,
+			RequestTimeoutSec: config.API.RequestTimeoutSec,
+		})
+		logger.Info("CCTV manager initialized")
+	}
 
 	// 4. WebRTC 관리자 초기화
 	app.webrtcManager = webrtc.NewManager(webrtc.ManagerConfig{
@@ -314,25 +347,23 @@ func initializeApplication(config *core.Config) (*Application, error) {
 	return app, nil
 }
 
-// addStream은 새로운 RTSP 스트림을 추가합니다
-func (app *Application) addStream(streamID, rtspURL string) error {
-	// 스트림 생성
-	stream, err := app.streamManager.CreateStream(streamID, streamID)
-	if err != nil {
-		return fmt.Errorf("failed to create stream: %w", err)
+// createRTSPClient은 RTSP 클라이언트를 생성하고 시작하는 헬퍼 메서드입니다
+func (app *Application) createRTSPClient(streamID, rtspURL, transport string, stream *core.Stream) (*rtsp.Client, error) {
+	// Transport 기본값 설정
+	if transport == "" {
+		transport = "tcp"
 	}
 
 	// RTSP 클라이언트 생성
 	client, err := rtsp.NewClient(rtsp.ClientConfig{
 		URL:        rtspURL,
-		Transport:  "tcp",
+		Transport:  transport,
 		Timeout:    time.Duration(app.config.RTSP.Client.Timeout) * time.Second,
 		RetryCount: app.config.RTSP.Client.RetryCount,
 		RetryDelay: time.Duration(app.config.RTSP.Client.RetryDelay) * time.Second,
 		Logger:     logger.Log,
-		Stream:     stream, // Stream 참조 전달 (코덱 설정용)
+		Stream:     stream,
 		OnPacket: func(pkt *rtp.Packet) {
-			// RTP 패킷을 스트림에 전달
 			if err := stream.WritePacket(pkt); err != nil {
 				logger.Error("Failed to write packet to stream",
 					zap.String("stream_id", streamID),
@@ -351,12 +382,29 @@ func (app *Application) addStream(streamID, rtspURL string) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create RTSP client: %w", err)
+		return nil, fmt.Errorf("failed to create RTSP client: %w", err)
 	}
 
 	// RTSP 클라이언트 시작
 	if err := client.Start(); err != nil {
-		return fmt.Errorf("failed to start RTSP client: %w", err)
+		return nil, fmt.Errorf("failed to start RTSP client: %w", err)
+	}
+
+	return client, nil
+}
+
+// addStream은 새로운 RTSP 스트림을 추가합니다
+func (app *Application) addStream(streamID, rtspURL string) error {
+	// 스트림 생성
+	stream, err := app.streamManager.CreateStream(streamID, streamID)
+	if err != nil {
+		return fmt.Errorf("failed to create stream: %w", err)
+	}
+
+	// RTSP 클라이언트 생성 및 시작
+	client, err := app.createRTSPClient(streamID, rtspURL, "tcp", stream)
+	if err != nil {
+		return err
 	}
 
 	// map에 저장
@@ -454,7 +502,8 @@ func (app *Application) handleWebRTCOffer(offer string, streamID string, client 
 		}
 
 		// 잠시 대기하여 RTSP 연결이 안정화되도록 함
-		time.Sleep(2 * time.Second)
+		waitTime := time.Duration(app.config.API.OnDemandWaitSec) * time.Second
+		time.Sleep(waitTime)
 	}
 
 	// WebRTC 피어 생성
@@ -602,46 +651,10 @@ func (app *Application) startOnDemandStream(streamID string) error {
 		return nil
 	}
 
-	// Transport 기본값 설정
-	transport := pathConfig.RTSPTransport
-	if transport == "" {
-		transport = "tcp"
-	}
-
-	// RTSP 클라이언트 생성하고 시작
-	client, err := rtsp.NewClient(rtsp.ClientConfig{
-		URL:        pathConfig.Source,
-		Transport:  transport,
-		Timeout:    time.Duration(app.config.RTSP.Client.Timeout) * time.Second,
-		RetryCount: app.config.RTSP.Client.RetryCount,
-		RetryDelay: time.Duration(app.config.RTSP.Client.RetryDelay) * time.Second,
-		Logger:     logger.Log,
-		Stream:     stream,
-		OnPacket: func(pkt *rtp.Packet) {
-			if err := stream.WritePacket(pkt); err != nil {
-				logger.Error("Failed to write packet to stream",
-					zap.String("stream_id", streamID),
-					zap.Error(err),
-				)
-			}
-		},
-		OnConnect: func() {
-			logger.Info("RTSP client connected", zap.String("stream_id", streamID))
-		},
-		OnDisconnect: func(err error) {
-			logger.Warn("RTSP client disconnected",
-				zap.String("stream_id", streamID),
-				zap.Error(err),
-			)
-		},
-	})
+	// RTSP 클라이언트 생성 및 시작
+	client, err := app.createRTSPClient(streamID, pathConfig.Source, pathConfig.RTSPTransport, stream)
 	if err != nil {
-		return fmt.Errorf("failed to create RTSP client: %w", err)
-	}
-
-	// RTSP 클라이언트 시작
-	if err := client.Start(); err != nil {
-		return fmt.Errorf("failed to start RTSP client: %w", err)
+		return err
 	}
 
 	// map에 저장

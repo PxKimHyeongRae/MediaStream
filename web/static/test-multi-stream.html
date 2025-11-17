@@ -297,40 +297,30 @@
         // 스트림 목록 로드
         async function loadStreams() {
             try {
-                const response = await fetch('/api/v1/streams');
+                const response = await fetch('/v3/config/paths/list');
                 const data = await response.json();
-                log(`📋 스트림 목록 로드됨: ${data.streams.length}개`, 'info');
+                const streams = data.items; // response 받는 대로 처리
 
-                // 모든 스트림 반환 (running, stopped 모두 포함)
-                data.streams.forEach(s => {
-                    log(`  - ${s.id}: ${s.status} (onDemand: ${s.onDemand})`, 'info');
+                log(`📋 스트림 목록 로드됨: ${streams.length}개`, 'info');
+
+                // 모든 스트림 반환
+                streams.forEach(s => {
+                    log(`  - ${s.name}: ${s.source}`, 'info');
                 });
 
-                return data.streams;
+                return streams;
             } catch (error) {
                 log('스트림 목록 로드 실패: ' + error.message, 'error');
                 return [];
             }
         }
 
-        // 온디맨드 스트림 시작
+        // 온디맨드 스트림 시작 (필요 시)
         async function startStream(streamId) {
-            try {
-                const response = await fetch(`/api/v1/streams/${streamId}/start`, {
-                    method: 'POST'
-                });
-
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Failed to start stream');
-                }
-
-                log(`✅ 스트림 시작 성공: ${streamId}`, 'success');
-                return true;
-            } catch (error) {
-                log(`❌ 스트림 시작 실패 ${streamId}: ${error.message}`, 'error');
-                return false;
-            }
+            // v3 API에서는 자동으로 온디맨드 처리되므로 별도 시작 불필요
+            // WebRTC 연결 시 자동으로 시작됨
+            log(`ℹ️ 스트림 준비: ${streamId}`, 'info');
+            return true;
         }
 
         // 스트림 카드 생성
@@ -363,28 +353,12 @@
         }
 
         // 스트림 연결
-        async function connectStream(streamId, streamStatus) {
-            console.log(`🔍 ========== connectStream("${streamId}", "${streamStatus}") ==========`);
+        async function connectStream(streamId) {
+            console.log(`🔍 ========== connectStream("${streamId}") ==========`);
             const index = createStreamCard(streamId);
             const videoElement = document.getElementById('video-' + index);
 
-            log(`🎬 스트림 연결 시도: ${streamId} (상태: ${streamStatus}, 인덱스: ${index})`, 'info');
-
-            // stopped 상태면 먼저 시작 요청
-            if (streamStatus === 'stopped') {
-                updateStreamStatus(index, 'connecting', '스트림 시작 중...');
-                log(`🚀 온디맨드 스트림 시작 요청: ${streamId}`, 'info');
-
-                const started = await startStream(streamId);
-                if (!started) {
-                    updateStreamStatus(index, 'error', '시작 실패');
-                    return;
-                }
-
-                // 스트림이 준비될 때까지 잠시 대기 (2초)
-                log(`⏳ 스트림 준비 대기: ${streamId}`, 'info');
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
+            log(`🎬 스트림 연결 시도: ${streamId} (인덱스: ${index})`, 'info');
 
             console.log(`🔍 Creating WebRTCEngine for ${streamId}...`);
             const engine = new WebRTCEngine({
@@ -445,7 +419,7 @@
 
             // 최대 3개 스트림 연결
             for (let i = 0; i < count; i++) {
-                await connectStream(streams[i].id, streams[i].status);
+                await connectStream(streams[i].name);
                 // 약간의 지연을 두고 연결
                 await new Promise(resolve => setTimeout(resolve, 800));
             }
@@ -472,10 +446,10 @@
 
             // 아직 연결하지 않은 스트림 찾기
             const connectedIds = engines.map(e => e.streamId);
-            const available = streams.find(s => !connectedIds.includes(s.id));
+            const available = streams.find(s => !connectedIds.includes(s.name));
 
             if (available) {
-                await connectStream(available.id, available.status);
+                await connectStream(available.name);
             } else {
                 log('⚠️ 모든 스트림이 이미 연결되었습니다', 'warn');
             }

@@ -27,6 +27,10 @@ type APIConfig struct {
 	BaseURL  string `yaml:"base_url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+
+	// Timing 설정
+	RequestTimeoutSec int `yaml:"request_timeout_sec"` // API 요청 타임아웃 (초)
+	OnDemandWaitSec   int `yaml:"on_demand_wait_sec"`  // 온디맨드 스트림 시작 대기 시간 (초)
 }
 
 // PathConfig는 mediaMTX 스타일 경로 설정 (내부용)
@@ -144,12 +148,26 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// 기본값 설정
+	config.setDefaults()
+
 	// 설정 검증
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &config, nil
+}
+
+// setDefaults는 설정의 기본값을 설정합니다
+func (c *Config) setDefaults() {
+	// API 설정 기본값
+	if c.API.RequestTimeoutSec == 0 {
+		c.API.RequestTimeoutSec = 30 // 30초
+	}
+	if c.API.OnDemandWaitSec == 0 {
+		c.API.OnDemandWaitSec = 2 // 2초
+	}
 }
 
 // Validate는 설정값의 유효성을 검증합니다

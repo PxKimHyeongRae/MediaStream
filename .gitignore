@@ -85,3 +85,4 @@ yarn-error.log
 tmp/
 /mediamtx-main/
 media-server.tar
+docker/deploy.ps1

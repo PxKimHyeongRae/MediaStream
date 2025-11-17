@@ -87,6 +87,16 @@ RTSP 프로토콜의 IP 카메라 스트림을 웹 브라우저에서 시청 가
    - WebRTC API 통합
    - 실시간 통계 표시
 
+8. **CCTV Manager** (`internal/cctv/manager.go`)
+   - AIOT API 연동을 통한 동적 CCTV 관리
+   - 인증, 동기화, CCTV 목록 조회
+   - Stream 설정 자동 생성 (PathConfig)
+
+9. **Logger** (`pkg/logger/logger.go`)
+   - zap 기반 구조화 로깅
+   - lumberjack을 통한 로그 로테이션
+   - 파일 크기/날짜 기반 자동 백업 및 압축
+
 ### 기술 스택
 
 **언어/프레임워크**:
@@ -100,6 +110,7 @@ RTSP 프로토콜의 IP 카메라 스트림을 웹 브라우저에서 시청 가
 - [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP 프레임워크
 - [gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket
 - [uber-go/zap](https://github.com/uber-go/zap) - 구조화 로깅
+- [lumberjack.v2](https://github.com/natefinch/lumberjack) - 로그 로테이션
 
 **인프라**:
 - YAML 기반 설정 파일
@@ -905,8 +916,19 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 ```
 
 ### 모니터링
-- **로그 위치**: stdout (콘솔)
+- **로그 위치**:
+  - 콘솔 출력 (stdout) - 서버 시작 시 로그 경로 표시
+  - 파일 로그 (logs/media-server-YYYY-MM-DD.log)
+  - **날짜별 자동 로그 파일 생성** ⭐
+  - 도커: `/app/logs/media-server-YYYY-MM-DD.log` → 호스트: `./log/media/media-server-YYYY-MM-DD.log`
 - **로그 레벨**: configs/config.yaml에서 설정
+- **로그 로테이션 설정**:
+  - 날짜별 파일 생성: media-server-2025-11-17.log 형식
+  - 매일 자정 자동 로테이션 (새 파일 생성)
+  - max_size: 500MB (단일 파일 크기 제한, 초과 시 백업)
+  - max_backups: 15 (보관할 백업 파일 수)
+  - max_age: 15일 (보관 기간)
+  - 자동 압축: 활성화 (구 로그 파일 gzip 압축)
 - **주요 메트릭**:
   - 활성 스트림 수
   - 연결된 피어 수
@@ -971,6 +993,42 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 - 사용자 친화적인 프론트엔드
 - 프로덕션 레벨 기능
 
+### v0.2.1 (2025-11-17) - AIOT Integration & Log Rotation
+- ✅ **AIOT API 연동을 통한 동적 CCTV 스트림 관리** ⭐
+  - 외부 API에서 CCTV 목록 자동 동기화
+  - 수동 동기화 API 엔드포인트 (POST /api/v1/sync)
+  - 주기적 동기화 제거 (요청 시에만 동기화)
+- ✅ **날짜별 로그 로테이션** ⭐
+  - 날짜별 파일 생성: media-server-2025-11-17.log 형식
+  - 매일 자정 자동 로테이션 (새 파일 생성)
+  - 파일 크기 제한 (max_size: 100MB)
+  - 백업 파일 관리 (max_backups: 3)
+  - 보관 기간 설정 (max_age: 7일)
+  - 자동 압축 활성화 (구 로그 파일 gzip)
+- ✅ **코드 리팩토링 및 개선**
+  - 초기화 순서 버그 수정 (StreamManager nil 문제)
+  - RTSP 클라이언트 생성 로직 헬퍼 메서드로 추출
+  - CCTVManager 인터페이스 정의 (internal/cctv/interface.go)
+  - 매직 넘버 제거 및 설정화
+  - URL 마스킹 보안 개선
+- ✅ **HTML 클라이언트 통합**
+  - 모든 HTML 파일이 `/v3/config/paths/list` API 사용
+  - 일관된 응답 데이터 처리 (data.items, stream.name)
+- ✅ **문서 정리**
+  - 중복/불필요 md 파일 삭제 (10개 파일)
+  - 통합 API 문서 작성 (docs/API.md, 600+ 줄)
+
+**변경된 파일**:
+- cmd/server/main.go - 초기화 순서, RTSP 헬퍼 메서드
+- internal/core/config.go - SyncIntervalSec 제거
+- internal/cctv/manager.go - ManualSync() 추가
+- internal/cctv/interface.go - Provider 인터페이스 정의
+- internal/client/api_client.go - SetRequestTimeout()
+- internal/api/server.go - POST /api/v1/sync 엔드포인트
+- pkg/logger/logger.go - lumberjack 로그 로테이션
+- web/static/viewer.html - API 엔드포인트 통합
+- web/static/test-multi-stream.html - API 엔드포인트 통합
+
 ### 다음 버전 (v0.3.0) 계획
 - 성능 최적화 및 지연시간 측정
 - 다중 클라이언트 부하 테스트
@@ -992,6 +1050,10 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 6. **온디맨드 스트림**: Stream 객체와 RTSP 클라이언트 생명주기 분리
 7. **대시보드 자동 연결**: setTimeout 1초로 DOM 렌더링 완료 대기
 8. **WebRTCEngine.js**: 다중 인스턴스 생성 가능, videoElement는 각각 독립적
+9. **로그 로테이션**: 날짜별 자동 파일 생성 (media-server-2025-11-17.log), 매일 자정 자동 로테이션
+10. **AIOT API 동기화**: 수동 동기화만 지원 (POST /api/v1/sync), 주기적 동기화 안 함
+11. **로그 파일명 형식**: `logs/media-server-YYYY-MM-DD.log` (날짜 포함)
+12. **로그 경로 표시**: 서버 시작 시 콘솔에 로그 파일 절대 경로 출력
 
 ### 웹 페이지 접속 URL
 
@@ -1001,10 +1063,12 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 - 원본 데모: http://localhost:8080/
 
 **API 엔드포인트**:
-- GET /api/v1/streams - 스트림 목록
+- GET /v3/config/paths/list - 스트림 목록 (mediaMTX 호환)
+- GET /api/v1/streams - 스트림 목록 (레거시)
 - GET /api/v1/streams/:id - 스트림 정보
 - POST /api/v1/streams/:id/start - 온디맨드 시작
 - DELETE /api/v1/streams/:id - 스트림 정지
+- POST /api/v1/sync - CCTV 목록 수동 동기화 (AIOT API)
 - GET /api/v1/health - 헬스 체크
 
 ### 실제 배포 카메라 정보
@@ -1026,7 +1090,7 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 
 ---
 
-**마지막 업데이트**: 2025-10-29
-**현재 버전**: v0.2.0 (mediaMTX Edition)
-**프로젝트 상태**: Phase 7 완료 - 다중 카메라 시스템 완성 ✅
+**마지막 업데이트**: 2025-11-17
+**현재 버전**: v0.2.1 (AIOT Integration & Log Rotation)
+**프로젝트 상태**: Phase 7 완료 - AIOT API 연동 및 로그 로테이션 구현 ✅
 **다음 마일스톤**: Phase 8 - 성능 최적화 및 부하 테스트

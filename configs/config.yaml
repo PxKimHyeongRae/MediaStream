@@ -94,13 +94,14 @@ logging:
   # 로그 출력: console, file, both
   output: "both"
   # 파일 로그 경로 (output이 file 또는 both일 때)
+  # 도커: /app/logs/media-server.log (볼륨 마운트: ./log/media:/app/logs)
   file_path: "logs/media-server.log"
   # 로그 파일 최대 크기 (MB)
-  max_size: 100
+  max_size: 500
   # 로그 파일 최대 개수
-  max_backups: 3
-  # 로그 파일 보관 기간 (일)
-  max_age: 7
+  max_backups: 15
+  # 로그 파일 보관기간 (일)
+  max_age: 15
 
 metrics:
   # Prometheus 메트릭 활성화

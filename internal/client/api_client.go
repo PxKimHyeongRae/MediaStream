@@ -45,10 +45,15 @@ func NewAPIClient(baseURL string) *APIClient {
 	return &APIClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 30 * time.Second, // Default timeout
 			Jar:     jar,
 		},
 	}
+}
+
+// SetRequestTimeout sets the HTTP client timeout
+func (c *APIClient) SetRequestTimeout(timeout time.Duration) {
+	c.httpClient.Timeout = timeout
 }
 
 // SignIn authenticates with the API and stores tokens/cookies

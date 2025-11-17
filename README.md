@@ -308,6 +308,69 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 ./bin/media-server
 ```
 
+### 도커 배포
+
+#### 1. 도커 이미지 빌드
+
+```bash
+# 빌드 스크립트 실행 (권장)
+chmod +x docker/build.sh
+./docker/build.sh
+
+# 또는 수동 빌드
+docker build -t media-server:latest -f docker/Dockerfile .
+```
+
+#### 2. 도커 실행
+
+**단독 실행:**
+```bash
+docker run -d \
+  --name media-server \
+  -p 8107:8107 \
+  -p 8106:8106 \
+  -p 9090:9090 \
+  -v ./configs:/app/configs:ro \
+  -v ./log/media:/app/logs \
+  media-server:latest
+```
+
+**docker-compose 사용 (권장):**
+```yaml
+services:
+  media-server:
+    image: media-server:latest
+    container_name: media-server
+    ports:
+      - "8107:8107"  # HTTP API
+      - "8106:8106"  # WebSocket
+      - "9090:9090"  # Metrics
+    volumes:
+      - ./configs/config.yaml:/app/configs/config.yaml:ro
+      - ./log/media:/app/logs
+    environment:
+      - TZ=Asia/Seoul
+    restart: unless-stopped
+```
+
+#### 3. 로그 확인
+
+서버 시작 시 콘솔에 로그 파일 경로가 표시됩니다:
+```
+Log directory created: /app/logs
+Log file path: /app/logs/media-server-2025-11-17.log
+Log rotation settings: max_size=500MB, max_backups=15, max_age=15days
+```
+
+호스트에서 로그 확인:
+```bash
+# 실시간 로그
+docker-compose logs -f media-server
+
+# 파일 로그 (호스트)
+tail -f ./log/media/media-server-$(date +%Y-%m-%d).log
+```
+
 ## 브라우저 호환성
 
 서버는 클라이언트가 지원하는 코덱을 자동으로 감지하여 최적의 코덱을 선택합니다.
@@ -448,8 +511,15 @@ webrtc:
     max_peers: 1000
 
 logging:
-  level: "info"
-  output: "console"
+  level: "info"              # debug, info, warn, error
+  output: "both"             # console, file, both
+  file_path: "logs/media-server.log"
+  max_size: 500              # MB (파일 크기 제한)
+  max_backups: 15            # 보관할 백업 파일 수
+  max_age: 15                # 일 단위 (보관 기간)
+  # 날짜별 로그 파일 자동 생성: logs/media-server-2025-11-17.log
+  # 매일 자정 자동 로테이션
+  # 도커: /app/logs/media-server-2025-11-17.log → 호스트: ./log/media/media-server-2025-11-17.log
 
 performance:
   gc_percent: 50

@@ -42,8 +42,9 @@ RUN mkdir -p /app/configs /app/logs /app/web && \
 # 설정 파일 및 웹 리소스 복사
 COPY --from=builder /app/web/static /app/web/static/
 
-# 비특권 사용자로 전환
-USER appuser
+# Entrypoint 스크립트 복사 및 실행 권한 부여
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # 포트 노출
 EXPOSE 8080 8081 9090
@@ -52,8 +53,11 @@ EXPOSE 8080 8081 9090
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# 엔트리포인트
-ENTRYPOINT ["/app/media-server"]
+# 비특권 사용자로 전환 (볼륨 마운트 권한 문제로 주석 처리)
+# USER appuser
 
-# 기본 설정 파일 경로
-CMD ["-config", "/app/configs/config.yaml"]
+# 엔트리포인트 스크립트 실행
+ENTRYPOINT ["/entrypoint.sh"]
+
+# 기본 명령어 (애플리케이션 실행)
+CMD ["/app/media-server", "-config", "/app/configs/config.yaml"]

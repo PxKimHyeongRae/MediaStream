@@ -352,9 +352,9 @@
         // 스트림 목록 로드
         async function loadStreams() {
             try {
-                const response = await fetch('/api/v1/streams');
+                const response = await fetch('/v3/config/paths/list');
                 const data = await response.json();
-                streams = data.streams;
+                streams = data.items; // response 받는 대로 처리
 
                 streamSelect.innerHTML = '';
                 if (streams.length === 0) {
@@ -364,14 +364,15 @@
 
                 streams.forEach(stream => {
                     const option = document.createElement('option');
-                    option.value = stream.id;
-                    option.textContent = `${stream.id} (${stream.status})`;
+                    option.value = stream.name;
+                    option.textContent = stream.name;
                     streamSelect.appendChild(option);
                 });
 
-                log('스트림 목록 로드 완료', 'info');
+                log(`스트림 목록 로드 완료 (${streams.length}개)`, 'info');
             } catch (error) {
                 log('스트림 목록 로드 실패: ' + error.message, 'error');
+                streamSelect.innerHTML = '<option value="">로드 실패</option>';
             }
         }
 
@@ -390,20 +391,13 @@
             }
 
             try {
-                // 선택한 스트림 정보 가져오기
-                const streamInfo = streams.find(s => s.id === streamId);
-
-                // 온디맨드 스트림이면 먼저 시작
-                if (streamInfo && streamInfo.onDemand && streamInfo.status === 'stopped') {
-                    log('온디맨드 스트림 시작 중...', 'info');
-                    await fetch(`/api/v1/streams/${streamId}/start`, { method: 'POST' });
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // 스트림 시작 대기
-                }
+                log(`연결 시도 중: ${streamId}`, 'info');
 
                 // WebRTC 연결
                 engine = new WebRTCEngine({
                     streamId: streamId,
-                    videoElement: videoPlayer
+                    videoElement: videoPlayer,
+                    autoReconnect: true
                 });
 
                 engine.on('connected', () => {
@@ -428,6 +422,7 @@
                 });
 
                 engine.on('statechange', (state) => {
+                    document.getElementById('statConnectionState').textContent = state;
                     document.getElementById('statIceState').textContent = state;
                     if (state === 'connecting') {
                         updateStatus('connecting', '연결 중...');
@@ -441,16 +436,26 @@
                 });
 
                 await engine.connect();
-                log('연결 시도 중: ' + streamId, 'info');
 
-                // 스트림 정보 가져오기
-                const response = await fetch(`/api/v1/streams/${streamId}`);
-                const info = await response.json();
-                document.getElementById('statCodec').textContent = info.codec || '알 수 없음';
+                // 코덱 정보 가져오기 (선택사항)
+                try {
+                    const response = await fetch(`/v3/config/paths/list`);
+                    const data = await response.json();
+                    const streamInfo = data.items.find(s => s.name === streamId);
+                    if (streamInfo && streamInfo.source) {
+                        // source URL에서 코덱 정보를 추론할 수 있으면 표시
+                        document.getElementById('statCodec').textContent = '자동 감지';
+                    }
+                } catch (e) {
+                    // 코덱 정보는 선택사항이므로 에러 무시
+                    document.getElementById('statCodec').textContent = '알 수 없음';
+                }
 
             } catch (error) {
                 log('연결 실패: ' + error.message, 'error');
                 updateStatus('error', '연결 실패');
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
             }
         }
 
