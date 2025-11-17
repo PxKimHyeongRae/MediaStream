@@ -14,6 +14,7 @@ type Config struct {
 	API         APIConfig         `yaml:"api"`
 	RTSP        RTSPConfig        `yaml:"rtsp"`
 	WebRTC      WebRTCConfig      `yaml:"webrtc"`
+	HLS         HLSConfig         `yaml:"hls"`
 	Media       MediaConfig       `yaml:"media"`
 	Logging     LoggingConfig     `yaml:"logging"`
 	Metrics     MetricsConfig     `yaml:"metrics"`
@@ -99,6 +100,15 @@ type WebRTCSettings struct {
 	AudioCodecs []string `yaml:"audio_codecs"`
 }
 
+type HLSConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	SegmentDuration   int    `yaml:"segment_duration"`
+	SegmentCount      int    `yaml:"segment_count"`
+	OutputDir         string `yaml:"output_dir"`
+	CleanupThreshold  int    `yaml:"cleanup_threshold"`
+	EnableCompression bool   `yaml:"enable_compression"`
+}
+
 type MediaConfig struct {
 	Buffer BufferConfig `yaml:"buffer"`
 	Codec  CodecConfig  `yaml:"codec"`
@@ -168,6 +178,20 @@ func (c *Config) setDefaults() {
 	if c.API.OnDemandWaitSec == 0 {
 		c.API.OnDemandWaitSec = 2 // 2초
 	}
+
+	// HLS 설정 기본값
+	if c.HLS.SegmentDuration == 0 {
+		c.HLS.SegmentDuration = 2 // 2초
+	}
+	if c.HLS.SegmentCount == 0 {
+		c.HLS.SegmentCount = 10 // 10개 세그먼트
+	}
+	if c.HLS.OutputDir == "" {
+		c.HLS.OutputDir = "hls" // 기본 출력 디렉토리
+	}
+	if c.HLS.CleanupThreshold == 0 {
+		c.HLS.CleanupThreshold = 20 // 최대 20개 세그먼트 유지
+	}
 }
 
 // Validate는 설정값의 유효성을 검증합니다
@@ -186,6 +210,19 @@ func (c *Config) Validate() error {
 
 	if c.WebRTC.Settings.MaxPeers <= 0 {
 		return fmt.Errorf("max_peers must be positive")
+	}
+
+	// HLS 설정 검증
+	if c.HLS.Enabled {
+		if c.HLS.SegmentDuration <= 0 {
+			return fmt.Errorf("hls segment_duration must be positive")
+		}
+		if c.HLS.SegmentCount <= 0 {
+			return fmt.Errorf("hls segment_count must be positive")
+		}
+		if c.HLS.CleanupThreshold < c.HLS.SegmentCount {
+			return fmt.Errorf("hls cleanup_threshold must be >= segment_count")
+		}
 	}
 
 	return nil

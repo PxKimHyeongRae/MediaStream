@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yourusername/cctv3/internal/cctv"
+	"github.com/yourusername/cctv3/internal/hls"
 	"go.uber.org/zap"
 )
 
@@ -18,21 +19,25 @@ type Server struct {
 	port       int
 
 	// 핸들러
-	healthHandler    func() map[string]interface{}
-	statsHandler     func() map[string]interface{}
-	websocketHandler func(http.ResponseWriter, *http.Request)
-	cctvManager      cctv.Provider
+	healthHandler      func() map[string]interface{}
+	statsHandler       func() map[string]interface{}
+	websocketHandler   func(http.ResponseWriter, *http.Request)
+	startStreamHandler func(streamID string) error // 스트림 시작 콜백
+	cctvManager        cctv.Provider
+	hlsManager         *hls.Manager
 }
 
 // ServerConfig는 API 서버 설정
 type ServerConfig struct {
-	Port             int
-	Production       bool
-	Logger           *zap.Logger
-	HealthHandler    func() map[string]interface{}
-	StatsHandler     func() map[string]interface{}
-	WebSocketHandler func(http.ResponseWriter, *http.Request)
-	CCTVManager      cctv.Provider
+	Port               int
+	Production         bool
+	Logger             *zap.Logger
+	HealthHandler      func() map[string]interface{}
+	StatsHandler       func() map[string]interface{}
+	WebSocketHandler   func(http.ResponseWriter, *http.Request)
+	StartStreamHandler func(streamID string) error // 스트림 시작 콜백
+	CCTVManager        cctv.Provider
+	HLSManager         *hls.Manager
 }
 
 // NewServer는 새로운 API 서버를 생성합니다
@@ -49,13 +54,15 @@ func NewServer(config ServerConfig) *Server {
 	router.Use(loggerMiddleware(config.Logger))
 
 	server := &Server{
-		logger:           config.Logger,
-		router:           router,
-		port:             config.Port,
-		healthHandler:    config.HealthHandler,
-		statsHandler:     config.StatsHandler,
-		websocketHandler: config.WebSocketHandler,
-		cctvManager:      config.CCTVManager,
+		logger:             config.Logger,
+		router:             router,
+		port:               config.Port,
+		healthHandler:      config.HealthHandler,
+		statsHandler:       config.StatsHandler,
+		websocketHandler:   config.WebSocketHandler,
+		startStreamHandler: config.StartStreamHandler,
+		cctvManager:        config.CCTVManager,
+		hlsManager:         config.HLSManager,
 	}
 
 	server.setupRoutes()
@@ -74,6 +81,14 @@ func (s *Server) setupRoutes() {
 		v1.GET("/health", s.handleHealth)
 		v1.GET("/stats", s.handleStats)
 		v1.POST("/sync", s.handleSync)
+
+		// HLS API endpoints
+		hlsGroup := v1.Group("/hls")
+		{
+			hlsGroup.GET("/streams", s.handleHLSStreamsList)
+			hlsGroup.GET("/streams/:id", s.handleHLSStreamInfo)
+			hlsGroup.GET("/streams/:id/stats", s.handleHLSStreamStats)
+		}
 	}
 
 	// API v3 - mediaMTX style endpoints
@@ -83,6 +98,10 @@ func (s *Server) setupRoutes() {
 		v3.POST("/add/:name", s.handlePathAdd)
 		v3.DELETE("/delete/:name", s.handlePathDelete)
 	}
+
+	// HLS 플레이리스트 및 세그먼트 서빙
+	s.router.GET("/hls/:streamId/index.m3u8", s.handleHLSPlaylist)
+	s.router.GET("/hls/:streamId/:segment", s.handleHLSSegment)
 
 	// WebSocket signaling
 	s.router.GET("/ws", gin.WrapF(s.websocketHandler))
@@ -311,4 +330,161 @@ func loggerMiddleware(logger *zap.Logger) gin.HandlerFunc {
 			zap.String("ip", c.ClientIP()),
 		)
 	}
+}
+
+// handleHLSStreamsList는 모든 HLS 스트림 목록을 반환합니다
+func (s *Server) handleHLSStreamsList(c *gin.Context) {
+	if s.hlsManager == nil || !s.hlsManager.IsEnabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "HLS is not enabled",
+		})
+		return
+	}
+
+	streams := s.hlsManager.GetAllStreams()
+
+	c.JSON(http.StatusOK, gin.H{
+		"streams": streams,
+		"count":   len(streams),
+	})
+}
+
+// handleHLSStreamInfo는 특정 HLS 스트림 정보를 반환합니다
+func (s *Server) handleHLSStreamInfo(c *gin.Context) {
+	streamID := c.Param("id")
+
+	if s.hlsManager == nil || !s.hlsManager.IsEnabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "HLS is not enabled handleHLSStreamInfo",
+		})
+		return
+	}
+
+	info, err := s.hlsManager.GetStreamInfo(streamID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Stream %s not found", streamID),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, info)
+}
+
+// handleHLSStreamStats는 특정 HLS 스트림 통계를 반환합니다
+func (s *Server) handleHLSStreamStats(c *gin.Context) {
+	streamID := c.Param("id")
+
+	if s.hlsManager == nil || !s.hlsManager.IsEnabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "HLS is not enabled",
+		})
+		return
+	}
+
+	stats, err := s.hlsManager.GetStats(streamID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Stream %s not found", streamID),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// handleHLSPlaylist는 M3U8 플레이리스트를 서빙합니다
+func (s *Server) handleHLSPlaylist(c *gin.Context) {
+	streamID := c.Param("streamId")
+
+	if s.hlsManager == nil || !s.hlsManager.IsEnabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "HLS is not enabled handleHLSPlaylist" + fmt.Sprintf("%v", s.hlsManager) + fmt.Sprintf("%v", s.hlsManager.IsEnabled()),
+		})
+		return
+	}
+
+	muxer, exists := s.hlsManager.GetMuxer(streamID)
+	if !exists {
+		// Muxer가 없으면 스트림을 자동으로 시작
+		s.logger.Info("HLS Muxer not found, attempting to start stream",
+			zap.String("stream_id", streamID))
+
+		if s.startStreamHandler != nil {
+			if err := s.startStreamHandler(streamID); err != nil {
+				s.logger.Error("Failed to start stream for HLS",
+					zap.String("stream_id", streamID),
+					zap.Error(err))
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": fmt.Sprintf("Failed to start stream %s: %v", streamID, err),
+				})
+				return
+			}
+
+			// Muxer 생성 대기 (retry 로직: 최대 5초, 0.5초 간격)
+			maxRetries := 10
+			retryInterval := 500 * time.Millisecond
+
+			for i := 0; i < maxRetries; i++ {
+				time.Sleep(retryInterval)
+
+				muxer, exists = s.hlsManager.GetMuxer(streamID)
+				if exists {
+					s.logger.Info("HLS Muxer ready after retry",
+						zap.String("stream_id", streamID),
+						zap.Int("retry_count", i+1),
+						zap.Duration("total_wait", time.Duration(i+1)*retryInterval))
+					break
+				}
+
+				s.logger.Debug("Waiting for HLS Muxer to be ready",
+					zap.String("stream_id", streamID),
+					zap.Int("retry", i+1),
+					zap.Int("max_retries", maxRetries))
+			}
+
+			// 최종 확인
+			if !exists {
+				s.logger.Error("HLS Muxer not ready after max retries",
+					zap.String("stream_id", streamID),
+					zap.Duration("total_wait", time.Duration(maxRetries)*retryInterval))
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": fmt.Sprintf("Stream %s started but HLS Muxer not ready after %.1f seconds. RTSP connection may be slow.",
+						streamID, float64(maxRetries)*retryInterval.Seconds()),
+				})
+				return
+			}
+		} else {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": fmt.Sprintf("Stream %s not found", streamID),
+			})
+			return
+		}
+	}
+
+	// gohlslib muxer의 Handle 메서드로 요청 전달
+	muxer.Handle(c.Writer, c.Request)
+}
+
+// handleHLSSegment는 TS 세그먼트를 서빙합니다
+func (s *Server) handleHLSSegment(c *gin.Context) {
+	streamID := c.Param("streamId")
+
+	if s.hlsManager == nil || !s.hlsManager.IsEnabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "HLS is not enabled",
+		})
+		return
+	}
+
+	muxer, exists := s.hlsManager.GetMuxer(streamID)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Stream %s not found", streamID),
+		})
+		return
+	}
+
+	// gohlslib muxer의 Handle 메서드로 요청 전달
+	muxer.Handle(c.Writer, c.Request)
 }

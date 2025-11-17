@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HLS Viewer - CCTV Streaming</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0f1419;
+            color: #ffffff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .protocol-badge {
+            background: #17bf63;
+            color: #0f1419;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
+            margin-left: 10px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-links a {
+            color: #1d9bf0;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+
+        .nav-links a:hover {
+            background: rgba(29, 155, 240, 0.1);
+        }
+
+        .controls {
+            background: #192734;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        select {
+            background: #0f1419;
+            color: #ffffff;
+            border: 1px solid #38444d;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 14px;
+            cursor: pointer;
+            min-width: 200px;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #1d9bf0;
+        }
+
+        button {
+            background: #1d9bf0;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #1a8cd8;
+        }
+
+        button:disabled {
+            background: #38444d;
+            cursor: not-allowed;
+        }
+
+        button.disconnect {
+            background: #f4212e;
+        }
+
+        button.disconnect:hover {
+            background: #d9182b;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #657786;
+        }
+
+        .status-dot.loaded {
+            background: #17bf63;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.loading {
+            background: #ffad1f;
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.error {
+            background: #f4212e;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .video-container {
+            background: #000000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            max-height: 70vh;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: #192734;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #8899a6;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .stat-unit {
+            font-size: 14px;
+            color: #8899a6;
+            margin-left: 4px;
+        }
+
+        .info-section {
+            background: #192734;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .info-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #38444d;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: #8899a6;
+            font-size: 14px;
+        }
+
+        .info-value {
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #38444d;
+            border-top-color: #1d9bf0;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .feature-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(29, 155, 240, 0.1);
+            color: #1d9bf0;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>
+                HLS Viewer
+                <span class="protocol-badge">HLS</span>
+            </h1>
+            <div class="nav-links">
+                <a href="/static/viewer.html">WebRTC Viewer</a>
+                <a href="/static/dashboard.html">Dashboard</a>
+                <a href="/">Home</a>
+            </div>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="streamSelect">스트림 선택:</label>
+                <select id="streamSelect">
+                    <option value="">스트림을 선택하세요</option>
+                </select>
+            </div>
+
+            <button id="loadBtn">스트림 로드</button>
+            <button id="disconnectBtn" class="disconnect" style="display: none;">중지</button>
+
+            <div class="status">
+                <div id="statusDot" class="status-dot"></div>
+                <span id="statusText">대기 중</span>
+            </div>
+        </div>
+
+        <div class="video-container">
+            <video id="videoPlayer" controls></video>
+            <div id="loadingOverlay" class="loading-overlay">
+                <div class="spinner"></div>
+                <div>HLS 스트림 로딩 중...</div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">비트레이트</div>
+                <div class="stat-value">
+                    <span id="bitrate">0</span>
+                    <span class="stat-unit">kbps</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">버퍼 길이</div>
+                <div class="stat-value">
+                    <span id="bufferLength">0</span>
+                    <span class="stat-unit">초</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">로드된 데이터</div>
+                <div class="stat-value">
+                    <span id="bytesLoaded">0</span>
+                    <span class="stat-unit">MB</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">드롭된 프레임</div>
+                <div class="stat-value">
+                    <span id="droppedFrames">0</span>
+                    <span class="stat-unit">frames</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <div class="info-title">스트림 정보</div>
+            <div class="info-row">
+                <span class="info-label">스트림 ID</span>
+                <span id="infoStreamId" class="info-value">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">프로토콜</span>
+                <span class="info-value">HLS (HTTP Live Streaming)</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">플레이리스트 URL</span>
+                <span id="infoPlaylistUrl" class="info-value">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">지원 브라우저</span>
+                <span class="info-value">Chrome, Firefox, Edge, Safari</span>
+            </div>
+
+            <div class="feature-badge">
+                ✓ 낮은 지연시간 (2초 세그먼트)
+            </div>
+            <div class="feature-badge">
+                ✓ 자동 품질 조절
+            </div>
+            <div class="feature-badge">
+                ✓ 버퍼링 최적화
+            </div>
+        </div>
+    </div>
+
+    <!-- hls.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <!-- HLSEngine -->
+    <script src="/static/js/hls-engine.js"></script>
+
+    <script>
+        let hlsEngine = null;
+        let streams = [];
+
+        // UI 요소
+        const streamSelect = document.getElementById('streamSelect');
+        const loadBtn = document.getElementById('loadBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const videoPlayer = document.getElementById('videoPlayer');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        // 통계 요소
+        const bitrateEl = document.getElementById('bitrate');
+        const bufferLengthEl = document.getElementById('bufferLength');
+        const bytesLoadedEl = document.getElementById('bytesLoaded');
+        const droppedFramesEl = document.getElementById('droppedFrames');
+
+        // 정보 요소
+        const infoStreamId = document.getElementById('infoStreamId');
+        const infoPlaylistUrl = document.getElementById('infoPlaylistUrl');
+
+        // 초기화
+        async function init() {
+            await loadStreams();
+            setupEventListeners();
+        }
+
+        // 스트림 목록 로드
+        async function loadStreams() {
+            try {
+                const response = await fetch('/v3/config/paths/list');
+                const data = await response.json();
+
+                streams = data.items || [];
+
+                // 셀렉트 박스 채우기
+                streamSelect.innerHTML = '<option value="">스트림을 선택하세요</option>';
+                streams.forEach(stream => {
+                    const option = document.createElement('option');
+                    option.value = stream.name;
+                    option.textContent = stream.name;
+                    streamSelect.appendChild(option);
+                });
+
+                console.log('📋 Loaded streams:', streams);
+            } catch (error) {
+                console.error('❌ Failed to load streams:', error);
+                updateStatus('error', '스트림 목록 로드 실패');
+            }
+        }
+
+        // 이벤트 리스너 설정
+        function setupEventListeners() {
+            loadBtn.addEventListener('click', loadStream);
+            disconnectBtn.addEventListener('click', disconnect);
+
+            // 스트림 선택 변경 시
+            streamSelect.addEventListener('change', () => {
+                loadBtn.disabled = !streamSelect.value;
+            });
+        }
+
+        // 스트림 로드
+        async function loadStream() {
+            const streamId = streamSelect.value;
+            if (!streamId) return;
+
+            try {
+                updateStatus('loading', '로딩 중...');
+                loadingOverlay.classList.remove('hidden');
+
+                // 이전 HLS 엔진 정리
+                if (hlsEngine) {
+                    hlsEngine.destroy();
+                }
+
+                // HLS 엔진 생성
+                hlsEngine = new HLSEngine({
+                    streamId: streamId,
+                    videoElement: videoPlayer,
+                    autoReconnect: true
+                });
+
+                // 이벤트 핸들러 등록
+                hlsEngine.on('loaded', () => {
+                    console.log('✅ HLS loaded');
+                    updateStatus('loaded', '재생 중');
+                    loadingOverlay.classList.add('hidden');
+                    updateUI(streamId);
+                    showDisconnectButton();
+                });
+
+                hlsEngine.on('playing', () => {
+                    console.log('▶️ HLS playing');
+                });
+
+                hlsEngine.on('error', (data) => {
+                    console.error('❌ HLS error:', data);
+                    updateStatus('error', `에러: ${data.message}`);
+                    loadingOverlay.classList.add('hidden');
+                });
+
+                hlsEngine.on('stats', (stats) => {
+                    updateStats(stats);
+                });
+
+                hlsEngine.on('buffering', (isBuffering) => {
+                    if (isBuffering) {
+                        loadingOverlay.classList.remove('hidden');
+                    } else {
+                        loadingOverlay.classList.add('hidden');
+                    }
+                });
+
+                // HLS 로드 시작
+                await hlsEngine.load();
+
+            } catch (error) {
+                console.error('❌ Failed to load stream:', error);
+                updateStatus('error', `로드 실패: ${error.message}`);
+                loadingOverlay.classList.add('hidden');
+            }
+        }
+
+        // 연결 해제
+        function disconnect() {
+            if (hlsEngine) {
+                hlsEngine.destroy();
+                hlsEngine = null;
+            }
+
+            updateStatus('', '대기 중');
+            loadingOverlay.classList.add('hidden');
+            hideDisconnectButton();
+            resetStats();
+            resetUI();
+        }
+
+        // 상태 업데이트
+        function updateStatus(state, text) {
+            statusDot.className = `status-dot ${state}`;
+            statusText.textContent = text;
+        }
+
+        // UI 업데이트
+        function updateUI(streamId) {
+            infoStreamId.textContent = streamId;
+            infoPlaylistUrl.textContent = `${window.location.origin}/hls/${streamId}/index.m3u8`;
+        }
+
+        // UI 리셋
+        function resetUI() {
+            infoStreamId.textContent = '-';
+            infoPlaylistUrl.textContent = '-';
+        }
+
+        // 통계 업데이트
+        function updateStats(stats) {
+            bitrateEl.textContent = Math.round(stats.bitrate || 0);
+            bufferLengthEl.textContent = (stats.bufferLength || 0).toFixed(1);
+            bytesLoadedEl.textContent = ((stats.bytesLoaded || 0) / 1024 / 1024).toFixed(2);
+            droppedFramesEl.textContent = stats.droppedFrames || 0;
+        }
+
+        // 통계 리셋
+        function resetStats() {
+            bitrateEl.textContent = '0';
+            bufferLengthEl.textContent = '0';
+            bytesLoadedEl.textContent = '0';
+            droppedFramesEl.textContent = '0';
+        }
+
+        // 버튼 표시/숨김
+        function showDisconnectButton() {
+            loadBtn.style.display = 'none';
+            disconnectBtn.style.display = 'inline-block';
+        }
+
+        function hideDisconnectButton() {
+            loadBtn.style.display = 'inline-block';
+            disconnectBtn.style.display = 'none';
+        }
+
+        // 페이지 로드 시 초기화
+        init();
+    </script>
+</body>
+</html>

@@ -17,6 +17,7 @@ import (
 	"github.com/yourusername/cctv3/internal/api"
 	"github.com/yourusername/cctv3/internal/cctv"
 	"github.com/yourusername/cctv3/internal/core"
+	"github.com/yourusername/cctv3/internal/hls"
 	"github.com/yourusername/cctv3/internal/process"
 	"github.com/yourusername/cctv3/internal/rtsp"
 	"github.com/yourusername/cctv3/internal/signaling"
@@ -179,6 +180,7 @@ type Application struct {
 	config          *core.Config
 	streamManager   *core.StreamManager
 	webrtcManager   *webrtc.Manager
+	hlsManager      *hls.Manager
 	signalingServer *signaling.Server
 	apiServer       *api.Server
 	processManager  *process.Manager
@@ -238,6 +240,23 @@ func initializeApplication(config *core.Config) (*Application, error) {
 		},
 	})
 	logger.Info("WebRTC manager initialized")
+
+	// 4.5. HLS 관리자 초기화
+	if config.HLS.Enabled {
+		app.hlsManager = hls.NewManager(hls.Config{
+			Enabled:           config.HLS.Enabled,
+			SegmentDuration:   config.HLS.SegmentDuration,
+			SegmentCount:      config.HLS.SegmentCount,
+			OutputDir:         config.HLS.OutputDir,
+			CleanupThreshold:  config.HLS.CleanupThreshold,
+			EnableCompression: config.HLS.EnableCompression,
+		}, logger.Log)
+		logger.Info("HLS manager initialized",
+			zap.String("output_dir", config.HLS.OutputDir),
+			zap.Int("segment_duration", config.HLS.SegmentDuration),
+			zap.Int("segment_count", config.HLS.SegmentCount),
+		)
+	}
 
 	// 5. 시그널링 서버 초기화
 	app.signalingServer = signaling.NewServer(signaling.ServerConfig{
@@ -315,7 +334,11 @@ func initializeApplication(config *core.Config) (*Application, error) {
 			return stats
 		},
 		WebSocketHandler: app.signalingServer.HandleWebSocket,
-		CCTVManager:      app.cctvManager,
+		StartStreamHandler: func(streamID string) error {
+			return app.startOnDemandStream(streamID)
+		},
+		CCTVManager: app.cctvManager,
+		HLSManager:  app.hlsManager,
 	})
 
 	// API 서버 시작
@@ -364,15 +387,59 @@ func (app *Application) createRTSPClient(streamID, rtspURL, transport string, st
 		Logger:     logger.Log,
 		Stream:     stream,
 		OnPacket: func(pkt *rtp.Packet) {
+			// Stream Manager에 패킷 전달 (WebRTC용)
 			if err := stream.WritePacket(pkt); err != nil {
 				logger.Error("Failed to write packet to stream",
 					zap.String("stream_id", streamID),
 					zap.Error(err),
 				)
 			}
+
+			// HLS Manager에 패킷 전달
+			if app.hlsManager != nil && app.hlsManager.IsEnabled() {
+				if err := app.hlsManager.WritePacket(streamID, pkt); err != nil {
+					// HLS 패킷 쓰기 실패는 로그만 남기고 계속 진행
+					logger.Debug("Failed to write packet to HLS",
+						zap.String("stream_id", streamID),
+						zap.Error(err),
+					)
+				}
+			}
 		},
 		OnConnect: func() {
 			logger.Info("RTSP client connected", zap.String("stream_id", streamID))
+
+			// HLS Muxer 생성 (HLS가 활성화된 경우)
+			if app.hlsManager != nil && app.hlsManager.IsEnabled() {
+				// 스트림에서 실제 코덱 가져오기
+				stream, err := app.streamManager.GetStream(streamID)
+				if err != nil {
+					logger.Error("Failed to get stream for HLS muxer",
+						zap.String("stream_id", streamID),
+						zap.Error(err),
+					)
+					return
+				}
+
+				codec := stream.GetVideoCodec()
+				if codec == "" {
+					codec = "H264" // 기본값
+				}
+
+				// SPS/PPS는 RTP 패킷에서 동적 감지
+				if _, err := app.hlsManager.CreateMuxer(streamID, codec, nil, nil, nil); err != nil {
+					logger.Error("Failed to create HLS muxer",
+						zap.String("stream_id", streamID),
+						zap.String("codec", codec),
+						zap.Error(err),
+					)
+				} else {
+					logger.Info("HLS muxer created",
+						zap.String("stream_id", streamID),
+						zap.String("codec", codec),
+					)
+				}
+			}
 		},
 		OnDisconnect: func(err error) {
 			logger.Warn("RTSP client disconnected",
@@ -439,6 +506,12 @@ func (app *Application) cleanup() {
 	for streamID, client := range app.rtspClients {
 		logger.Info("Stopping RTSP client", zap.String("stream_id", streamID))
 		client.Stop()
+	}
+
+	// 3.5. HLS Manager 중지
+	if app.hlsManager != nil {
+		app.hlsManager.StopAll()
+		logger.Info("HLS manager stopped")
 	}
 
 	// 4. RTSP 서버 종료
@@ -609,7 +682,7 @@ func (app *Application) loadStreamsFromCCTV() error {
 			zap.Bool("on_demand", cctv.SourceOnDemand),
 		)
 
-		// 모든 CCTV 스트림은 온디맨드로 처리 (API 기반이므로)
+		// Stream 객체 생성
 		if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
 			logger.Error("Failed to create CCTV stream",
 				zap.String("stream_id", streamID),
@@ -618,6 +691,7 @@ func (app *Application) loadStreamsFromCCTV() error {
 			continue
 		}
 
+		// 모든 CCTV 스트림은 온디맨드로 처리
 		logger.Info("CCTV stream created (on-demand)",
 			zap.String("stream_id", streamID),
 			zap.String("name", cctv.Name),

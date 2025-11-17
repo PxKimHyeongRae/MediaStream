@@ -165,7 +165,7 @@ func (m *CCTVManager) fetchCCTVs() error {
 			ID:             streamID,
 			Name:           cctv.Name,
 			URL:            cctv.URL,
-			SourceOnDemand: true,  // Default to on-demand for external API sources
+			SourceOnDemand: true,  // 기본값: on-demand (true)
 			RTSPTransport:  "tcp", // Default to TCP
 		}
 
@@ -173,6 +173,7 @@ func (m *CCTVManager) fetchCCTVs() error {
 			zap.String("stream_id", streamID),
 			zap.String("name", cctv.Name),
 			zap.String("url", m.maskURL(cctv.URL)),
+			zap.Bool("source_on_demand", true),
 		)
 	}
 

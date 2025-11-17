@@ -86,3 +86,4 @@ tmp/
 /mediamtx-main/
 media-server.tar
 docker/deploy.ps1
+/hls/

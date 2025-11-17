@@ -73,6 +73,20 @@ webrtc:
       - "PCMU"
       - "PCMA"
 
+hls:
+  # HLS 스트리밍 활성화
+  enabled: true
+  # 세그먼트 길이 (초) - 카메라 IDR 간격에 맞춤
+  segment_duration: 2
+  # 플레이리스트에 유지할 세그먼트 수 - 버퍼 안정성을 위해 증가
+  segment_count: 5
+  # 세그먼트 저장 디렉토리
+  output_dir: "hls"
+  # 디스크에 유지할 최대 세그먼트 수
+  cleanup_threshold: 20
+  # 세그먼트 압축 활성화 (gzip)
+  enable_compression: false
+
 media:
   # 미디어 버퍼 설정
   buffer:
