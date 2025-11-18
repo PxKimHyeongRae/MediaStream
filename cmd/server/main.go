@@ -15,8 +15,9 @@ import (
 
 	"github.com/pion/rtp"
 	"github.com/yourusername/cctv3/internal/api"
-	"github.com/yourusername/cctv3/internal/cctv"
+	// "github.com/yourusername/cctv3/internal/cctv" // AIOT API 관련 - 향후 재사용을 위해 주석 처리
 	"github.com/yourusername/cctv3/internal/core"
+	"github.com/yourusername/cctv3/internal/database"
 	"github.com/yourusername/cctv3/internal/hls"
 	"github.com/yourusername/cctv3/internal/process"
 	"github.com/yourusername/cctv3/internal/rtsp"
@@ -84,15 +85,25 @@ func main() {
 	}
 
 	// 설정 정보 출력
-	logger.Info("Server configuration",
+	logFields := []zap.Field{
 		zap.Int("http_port", config.Server.HTTPPort),
 		zap.Int("ws_port", config.Server.WSPort),
 		zap.Bool("production", config.Server.Production),
-		zap.Bool("api_enabled", config.API.Enabled),
-		zap.String("api_url", config.API.BaseURL),
 		zap.Int("max_streams", config.RTSP.Pool.MaxStreams),
 		zap.Int("max_peers", config.WebRTC.Settings.MaxPeers),
-	)
+	}
+
+	// API 설정이 있는 경우에만 추가
+	if config.API != nil {
+		logFields = append(logFields,
+			zap.Bool("api_enabled", config.API.Enabled),
+			zap.String("api_url", config.API.BaseURL),
+		)
+	} else {
+		logFields = append(logFields, zap.Bool("api_enabled", false))
+	}
+
+	logger.Info("Server configuration", logFields...)
 
 	// 서버 컴포넌트 초기화
 	app, err := initializeApplication(config)
@@ -103,19 +114,22 @@ func main() {
 
 	logger.Info("All components initialized successfully")
 
-	// API 기반 CCTV 스트림 로드
-	if config.API.Enabled {
-		if err := app.cctvManager.Start(); err != nil {
-			logger.Error("Failed to start CCTV manager", zap.Error(err))
-		} else {
-			// CCTV 데이터로 스트림 로드
-			if err := app.loadStreamsFromCCTV(); err != nil {
-				logger.Error("Failed to load streams from CCTV", zap.Error(err))
-			}
-		}
-	} else {
-		logger.Warn("API is disabled, no streams will be loaded")
+	// config.yaml + 데이터베이스에서 스트림 로드
+	if err := app.loadStreamsFromConfigAndDB(); err != nil {
+		logger.Error("Failed to load streams", zap.Error(err))
 	}
+
+	// AIOT API 기반 CCTV 스트림 로드 - 향후 재사용을 위해 주석 처리
+	// if config.API != nil && config.API.Enabled {
+	// 	if err := app.cctvManager.Start(); err != nil {
+	// 		logger.Error("Failed to start CCTV manager", zap.Error(err))
+	// 	} else {
+	// 		// CCTV 데이터로 스트림 로드
+	// 		if err := app.loadStreamsFromCCTV(); err != nil {
+	// 			logger.Error("Failed to load streams from CCTV", zap.Error(err))
+	// 		}
+	// 	}
+	// }
 
 	// 종료 시그널 대기
 	sigChan := make(chan os.Signal, 1)
@@ -184,9 +198,16 @@ type Application struct {
 	signalingServer *signaling.Server
 	apiServer       *api.Server
 	processManager  *process.Manager
-	cctvManager     *cctv.CCTVManager
-	rtspClients     map[string]*rtsp.Client // streamID -> RTSP client
-	rtspServer      *rtsp.ServerRTSP        // RTSP 서버 (ffmpeg publish/subscribe용)
+
+	// Database and repository
+	db         *database.DB
+	streamRepo *database.StreamRepository
+
+	// AIOT API 관련 (향후 재사용을 위해 주석 처리)
+	// cctvManager     *cctv.CCTVManager
+
+	rtspClients map[string]*rtsp.Client // streamID -> RTSP client
+	rtspServer  *rtsp.ServerRTSP        // RTSP 서버 (ffmpeg publish/subscribe용)
 
 	// 피어와 스트림 매핑
 	peerStreams map[string]string // peerID -> streamID
@@ -214,22 +235,33 @@ func initializeApplication(config *core.Config) (*Application, error) {
 	app.streamManager = core.NewStreamManager(logger.Log)
 	logger.Info("Stream manager initialized")
 
+	// 1.5. 데이터베이스 초기화 (API 서버보다 먼저!)
+	db, err := database.New(config.Database.Path, logger.Log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+	app.db = db
+	app.streamRepo = database.NewStreamRepository(db, logger.Log)
+	logger.Info("Database initialized successfully",
+		zap.String("path", config.Database.Path),
+	)
+
 	// 2. ProcessManager 초기화 (runOnDemand 프로세스 관리)
 	app.processManager = process.NewManager(logger.Log)
 	logger.Info("ProcessManager initialized")
 
-	// 3. CCTV Manager 초기화 (외부 API 연동) - StreamManager가 필요
-	if config.API.Enabled {
-		app.cctvManager = cctv.NewCCTVManager(cctv.Config{
-			APIURL:            config.API.BaseURL,
-			Username:          config.API.Username,
-			Password:          config.API.Password,
-			StreamManager:     app.streamManager,
-			Logger:            logger.Log,
-			RequestTimeoutSec: config.API.RequestTimeoutSec,
-		})
-		logger.Info("CCTV manager initialized")
-	}
+	// 3. CCTV Manager 초기화 (외부 API 연동) - 향후 재사용을 위해 주석 처리
+	// if config.API != nil && config.API.Enabled {
+	// 	app.cctvManager = cctv.NewCCTVManager(cctv.Config{
+	// 		APIURL:            config.API.BaseURL,
+	// 		Username:          config.API.Username,
+	// 		Password:          config.API.Password,
+	// 		StreamManager:     app.streamManager,
+	// 		Logger:            logger.Log,
+	// 		RequestTimeoutSec: config.API.RequestTimeoutSec,
+	// 	})
+	// 	logger.Info("CCTV manager initialized")
+	// }
 
 	// 4. WebRTC 관리자 초기화
 	app.webrtcManager = webrtc.NewManager(webrtc.ManagerConfig{
@@ -292,44 +324,43 @@ func initializeApplication(config *core.Config) (*Application, error) {
 		},
 		StatsHandler: func() map[string]interface{} {
 			stats := map[string]interface{}{
-				"uptime":      "0h 0m 0s", // TODO: 실제 uptime 계산
-				"streams":     len(app.rtspClients),
-				"clients":     app.signalingServer.GetClientCount(),
-				"peers":       app.webrtcManager.GetPeerCount(),
-				"api_enabled": config.API.Enabled,
+				"uptime":  "0h 0m 0s", // TODO: 실제 uptime 계산
+				"streams": len(app.rtspClients),
+				"clients": app.signalingServer.GetClientCount(),
+				"peers":   app.webrtcManager.GetPeerCount(),
 			}
 
-			// API가 활성화된 경우 CCTV 정보 추가
-			if config.API.Enabled && app.cctvManager != nil {
-				cctvs := app.cctvManager.GetCCTVs()
-				stats["cctvs"] = len(cctvs)
-
-				// CCTV 목록 추가
-				cctvList := make([]map[string]interface{}, 0, len(cctvs))
-				for streamID, cctv := range cctvs {
-					cctvInfo := map[string]interface{}{
-						"id":             streamID,
-						"name":           cctv.Name,
-						"sourceOnDemand": cctv.SourceOnDemand,
-					}
-
-					// RTSP 클라이언트 상태 확인
-					if _, isRunning := app.rtspClients[streamID]; isRunning {
-						cctvInfo["status"] = "running"
-						if stream, err := app.streamManager.GetStream(streamID); err == nil {
-							cctvInfo["codec"] = stream.GetVideoCodec()
-							cctvInfo["subscribers"] = stream.GetSubscriberCount()
-						}
-					} else {
-						cctvInfo["status"] = "stopped"
-						cctvInfo["codec"] = nil
-						cctvInfo["subscribers"] = 0
-					}
-
-					cctvList = append(cctvList, cctvInfo)
-				}
-				stats["cctv_list"] = cctvList
-			}
+			// AIOT API 관련 CCTV 정보 - 향후 재사용을 위해 주석 처리
+			// if config.API != nil && config.API.Enabled && app.cctvManager != nil {
+			// 	cctvs := app.cctvManager.GetCCTVs()
+			// 	stats["cctvs"] = len(cctvs)
+			//
+			// 	// CCTV 목록 추가
+			// 	cctvList := make([]map[string]interface{}, 0, len(cctvs))
+			// 	for streamID, cctv := range cctvs {
+			// 		cctvInfo := map[string]interface{}{
+			// 			"id":             streamID,
+			// 			"name":           cctv.Name,
+			// 			"sourceOnDemand": cctv.SourceOnDemand,
+			// 		}
+			//
+			// 		// RTSP 클라이언트 상태 확인
+			// 		if _, isRunning := app.rtspClients[streamID]; isRunning {
+			// 			cctvInfo["status"] = "running"
+			// 			if stream, err := app.streamManager.GetStream(streamID); err == nil {
+			// 				cctvInfo["codec"] = stream.GetVideoCodec()
+			// 				cctvInfo["subscribers"] = stream.GetSubscriberCount()
+			// 			}
+			// 		} else {
+			// 			cctvInfo["status"] = "stopped"
+			// 			cctvInfo["codec"] = nil
+			// 			cctvInfo["subscribers"] = 0
+			// 		}
+			//
+			// 		cctvList = append(cctvList, cctvInfo)
+			// 	}
+			// 	stats["cctv_list"] = cctvList
+			// }
 
 			return stats
 		},
@@ -337,8 +368,13 @@ func initializeApplication(config *core.Config) (*Application, error) {
 		StartStreamHandler: func(streamID string) error {
 			return app.startOnDemandStream(streamID)
 		},
-		CCTVManager: app.cctvManager,
-		HLSManager:  app.hlsManager,
+		StopStreamHandler: func(streamID string) error {
+			return app.stopStream(streamID)
+		},
+		StreamRepository: app.streamRepo,    // Database repository for CRUD operations
+		StreamManager:    app.streamManager, // Stream manager for runtime streams
+		// CCTVManager: app.cctvManager, // AIOT API 관련 - 향후 재사용을 위해 주석 처리
+		HLSManager: app.hlsManager,
 	})
 
 	// API 서버 시작
@@ -368,6 +404,131 @@ func initializeApplication(config *core.Config) (*Application, error) {
 	logger.Info("ProcessManager inactivity monitor started")
 
 	return app, nil
+}
+
+// loadStreamsFromConfigAndDB는 config.yaml과 데이터베이스에서 스트림을 로드합니다
+func (app *Application) loadStreamsFromConfigAndDB() error {
+	// 1. config.yaml을 Database에 동기화 (UPSERT)
+	if app.config.Paths != nil && len(app.config.Paths) > 0 {
+		logger.Info("Syncing config.yaml to database", zap.Int("count", len(app.config.Paths)))
+
+		for streamID, pathConfig := range app.config.Paths {
+			dbStream := &database.Stream{
+				ID:             streamID,
+				Name:           streamID, // config.yaml은 Name이 없으므로 ID 사용
+				Source:         pathConfig.Source,
+				SourceOnDemand: pathConfig.SourceOnDemand,
+				RTSPTransport:  pathConfig.RTSPTransport,
+			}
+
+			// Database에 이미 존재하는지 확인
+			existing, err := app.streamRepo.Get(streamID)
+			if err == nil {
+				// 존재하면 스킵 (Database 데이터 우선)
+				logger.Info("Stream already in database, skipping config sync",
+					zap.String("stream_id", streamID),
+					zap.String("existing_name", existing.Name),
+				)
+				continue
+			}
+
+			// 존재하지 않으면 INSERT
+			if err := app.streamRepo.Create(dbStream); err != nil {
+				logger.Error("Failed to sync config stream to database",
+					zap.String("stream_id", streamID),
+					zap.Error(err),
+				)
+			} else {
+				logger.Info("Config stream synced to database",
+					zap.String("stream_id", streamID),
+					zap.String("url", maskRTSPURL(pathConfig.Source)),
+				)
+			}
+		}
+	}
+
+	// 2. Database를 Single Source of Truth로 사용
+	dbStreams, err := app.streamRepo.List()
+	if err != nil {
+		return fmt.Errorf("failed to load streams from database: %w", err)
+	}
+
+	logger.Info("Loading streams from database (Single Source of Truth)", zap.Int("count", len(dbStreams)))
+
+	loadedCount := 0
+	for _, dbStream := range dbStreams {
+		logger.Info("Processing stream from database",
+			zap.String("stream_id", dbStream.ID),
+			zap.String("name", dbStream.Name),
+			zap.String("url", maskRTSPURL(dbStream.Source)),
+			zap.Bool("on_demand", dbStream.SourceOnDemand),
+		)
+
+		// StreamManager에 Stream 객체 생성 (필수!)
+		if _, err := app.streamManager.CreateStream(dbStream.ID, dbStream.Name); err != nil {
+			logger.Error("Failed to create stream in manager",
+				zap.String("stream_id", dbStream.ID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// sourceOnDemand=false인 경우 즉시 RTSP 클라이언트 시작
+		if !dbStream.SourceOnDemand {
+			pathConfig := core.PathConfig{
+				Source:         dbStream.Source,
+				SourceOnDemand: dbStream.SourceOnDemand,
+				RTSPTransport:  dbStream.RTSPTransport,
+			}
+
+			if err := app.startRTSPClient(dbStream.ID, pathConfig); err != nil {
+				logger.Error("Failed to start RTSP client",
+					zap.String("stream_id", dbStream.ID),
+					zap.Error(err),
+				)
+				continue
+			}
+		} else {
+			logger.Info("Stream loaded (on-demand)",
+				zap.String("stream_id", dbStream.ID),
+				zap.String("name", dbStream.Name),
+			)
+		}
+
+		loadedCount++
+	}
+
+	logger.Info("Stream loading completed",
+		zap.Int("total_loaded", loadedCount),
+		zap.Int("from_database", len(dbStreams)),
+	)
+
+	return nil
+}
+
+// startRTSPClient는 RTSP 클라이언트를 시작하는 헬퍼 메서드입니다
+func (app *Application) startRTSPClient(streamID string, pathConfig core.PathConfig) error {
+	// Stream 가져오기
+	stream, err := app.streamManager.GetStream(streamID)
+	if err != nil {
+		return fmt.Errorf("stream not found: %w", err)
+	}
+
+	// RTSP 클라이언트 생성 및 시작
+	client, err := app.createRTSPClient(streamID, pathConfig.Source, pathConfig.RTSPTransport, stream)
+	if err != nil {
+		return err
+	}
+
+	// map에 저장
+	app.rtspClients[streamID] = client
+
+	logger.Info("RTSP stream started",
+		zap.String("stream_id", streamID),
+		zap.String("url", maskRTSPURL(pathConfig.Source)),
+	)
+
+	return nil
 }
 
 // createRTSPClient은 RTSP 클라이언트를 생성하고 시작하는 헬퍼 메서드입니다
@@ -490,11 +651,20 @@ func (app *Application) cleanup() {
 		logger.Info("Context cancelled")
 	}
 
-	// 2. CCTV Manager 중지
-	if app.cctvManager != nil {
-		app.cctvManager.Stop()
-		logger.Info("CCTV manager stopped")
+	// 2. Database 종료
+	if app.db != nil {
+		if err := app.db.Close(); err != nil {
+			logger.Error("Failed to close database", zap.Error(err))
+		} else {
+			logger.Info("Database closed")
+		}
 	}
+
+	// 2.5. CCTV Manager 중지 - AIOT API 관련 (향후 재사용을 위해 주석 처리)
+	// if app.cctvManager != nil {
+	// 	app.cctvManager.Stop()
+	// 	logger.Info("CCTV manager stopped")
+	// }
 
 	// 3. 모든 외부 프로세스 중지
 	if app.processManager != nil {
@@ -575,7 +745,7 @@ func (app *Application) handleWebRTCOffer(offer string, streamID string, client 
 		}
 
 		// 잠시 대기하여 RTSP 연결이 안정화되도록 함
-		waitTime := time.Duration(app.config.API.OnDemandWaitSec) * time.Second
+		waitTime := time.Duration(app.config.RTSP.Client.OnDemandWaitSec) * time.Second
 		time.Sleep(waitTime)
 	}
 
@@ -666,63 +836,81 @@ func (app *Application) cleanupClientPeers(clientID string) {
 }
 
 // loadStreamsFromCCTV는 CCTV 매니저에서 스트림을 로드합니다
-func (app *Application) loadStreamsFromCCTV() error {
-	if app.cctvManager == nil {
-		return fmt.Errorf("CCTV manager not initialized")
-	}
-
-	cctvs := app.cctvManager.GetCCTVs()
-	logger.Info("Loading streams from CCTV manager", zap.Int("cctv_count", len(cctvs)))
-
-	for streamID, cctv := range cctvs {
-		logger.Info("Processing CCTV stream",
-			zap.String("stream_id", streamID),
-			zap.String("name", cctv.Name),
-			zap.String("url", maskRTSPURL(cctv.URL)),
-			zap.Bool("on_demand", cctv.SourceOnDemand),
-		)
-
-		// Stream 객체 생성
-		if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
-			logger.Error("Failed to create CCTV stream",
-				zap.String("stream_id", streamID),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		// 모든 CCTV 스트림은 온디맨드로 처리
-		logger.Info("CCTV stream created (on-demand)",
-			zap.String("stream_id", streamID),
-			zap.String("name", cctv.Name),
-		)
-	}
-
-	return nil
-}
+// AIOT API 관련 - 향후 재사용을 위해 주석 처리
+// func (app *Application) loadStreamsFromCCTV() error {
+// 	if app.cctvManager == nil {
+// 		return fmt.Errorf("CCTV manager not initialized")
+// 	}
+//
+// 	cctvs := app.cctvManager.GetCCTVs()
+// 	logger.Info("Loading streams from CCTV manager", zap.Int("cctv_count", len(cctvs)))
+//
+// 	for streamID, cctv := range cctvs {
+// 		logger.Info("Processing CCTV stream",
+// 			zap.String("stream_id", streamID),
+// 			zap.String("name", cctv.Name),
+// 			zap.String("url", maskRTSPURL(cctv.URL)),
+// 			zap.Bool("on_demand", cctv.SourceOnDemand),
+// 		)
+//
+// 		// Stream 객체 생성
+// 		if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
+// 			logger.Error("Failed to create CCTV stream",
+// 				zap.String("stream_id", streamID),
+// 				zap.Error(err),
+// 			)
+// 			continue
+// 		}
+//
+// 		// 모든 CCTV 스트림은 온디맨드로 처리
+// 		logger.Info("CCTV stream created (on-demand)",
+// 			zap.String("stream_id", streamID),
+// 			zap.String("name", cctv.Name),
+// 		)
+// 	}
+//
+// 	return nil
+// }
 
 // startOnDemandStream은 온디맨드 스트림을 시작합니다
 func (app *Application) startOnDemandStream(streamID string) error {
-	// CCTV Manager에서 stream config 찾기
-	if app.cctvManager == nil {
-		return fmt.Errorf("CCTV manager not initialized")
+	// 이미 RTSP 클라이언트가 실행 중인지 확인
+	if _, exists := app.rtspClients[streamID]; exists {
+		logger.Info("RTSP stream already running", zap.String("stream_id", streamID))
+		return nil
 	}
 
-	pathConfig, err := app.cctvManager.GetStreamConfig(streamID)
-	if err != nil {
-		return fmt.Errorf("stream %s not found in CCTV manager: %w", streamID, err)
-	}
-
-	// 스트림이 이미 존재하는지 확인
+	// Stream 객체가 존재하는지 확인
 	stream, err := app.streamManager.GetStream(streamID)
 	if err != nil {
 		return fmt.Errorf("stream not found: %w", err)
 	}
 
-	// 이미 RTSP 클라이언트가 있는지 확인
-	if _, exists := app.rtspClients[streamID]; exists {
-		logger.Info("RTSP stream already running", zap.String("stream_id", streamID))
-		return nil
+	// 1. config.yaml의 paths에서 찾기
+	var pathConfig core.PathConfig
+	var found bool
+
+	if app.config.Paths != nil {
+		if cfg, exists := app.config.Paths[streamID]; exists {
+			pathConfig = cfg
+			found = true
+			logger.Debug("Stream config found in config.yaml", zap.String("stream_id", streamID))
+		}
+	}
+
+	// 2. config.yaml에 없으면 데이터베이스에서 찾기
+	if !found {
+		dbStream, err := app.streamRepo.Get(streamID)
+		if err != nil {
+			return fmt.Errorf("stream config not found in config or database: %w", err)
+		}
+
+		pathConfig = core.PathConfig{
+			Source:         dbStream.Source,
+			SourceOnDemand: dbStream.SourceOnDemand,
+			RTSPTransport:  dbStream.RTSPTransport,
+		}
+		logger.Debug("Stream config found in database", zap.String("stream_id", streamID))
 	}
 
 	// RTSP 클라이언트 생성 및 시작
@@ -742,6 +930,47 @@ func (app *Application) startOnDemandStream(streamID string) error {
 	return nil
 }
 
+// startOnDemandStream의 AIOT API 버전 - 향후 재사용을 위해 주석 처리
+// func (app *Application) startOnDemandStream(streamID string) error {
+// 	// CCTV Manager에서 stream config 찾기
+// 	if app.cctvManager == nil {
+// 		return fmt.Errorf("CCTV manager not initialized")
+// 	}
+//
+// 	pathConfig, err := app.cctvManager.GetStreamConfig(streamID)
+// 	if err != nil {
+// 		return fmt.Errorf("stream %s not found in CCTV manager: %w", streamID, err)
+// 	}
+//
+// 	// 스트림이 이미 존재하는지 확인
+// 	stream, err := app.streamManager.GetStream(streamID)
+// 	if err != nil {
+// 		return fmt.Errorf("stream not found: %w", err)
+// 	}
+//
+// 	// 이미 RTSP 클라이언트가 있는지 확인
+// 	if _, exists := app.rtspClients[streamID]; exists {
+// 		logger.Info("RTSP stream already running", zap.String("stream_id", streamID))
+// 		return nil
+// 	}
+//
+// 	// RTSP 클라이언트 생성 및 시작
+// 	client, err := app.createRTSPClient(streamID, pathConfig.Source, pathConfig.RTSPTransport, stream)
+// 	if err != nil {
+// 		return err
+// 	}
+//
+// 	// map에 저장
+// 	app.rtspClients[streamID] = client
+//
+// 	logger.Info("On-demand RTSP stream started",
+// 		zap.String("stream_id", streamID),
+// 		zap.String("url", maskRTSPURL(pathConfig.Source)),
+// 	)
+//
+// 	return nil
+// }
+
 // parseDuration은 문자열을 time.Duration으로 파싱합니다
 func parseDuration(s string) (time.Duration, error) {
 	if s == "" {
@@ -752,6 +981,18 @@ func parseDuration(s string) (time.Duration, error) {
 
 // stopStream은 스트림을 중지합니다
 func (app *Application) stopStream(streamID string) error {
+	// HLS muxer 제거 (있으면)
+	if app.hlsManager != nil {
+		if err := app.hlsManager.RemoveMuxer(streamID); err != nil {
+			logger.Debug("No HLS muxer to remove (or already removed)",
+				zap.String("stream_id", streamID),
+				zap.Error(err),
+			)
+		} else {
+			logger.Info("HLS muxer removed", zap.String("stream_id", streamID))
+		}
+	}
+
 	// runOnDemand 프로세스 중지 시도
 	if app.processManager.IsRunning(streamID) {
 		logger.Info("Stopping runOnDemand process", zap.String("stream_id", streamID))

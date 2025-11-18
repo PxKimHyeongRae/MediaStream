@@ -21,9 +21,9 @@ type StreamManager struct {
 
 // Stream은 단일 미디어 스트림을 나타냅니다
 type Stream struct {
-	id       string
-	name     string
-	logger   *zap.Logger
+	id     string
+	name   string
+	logger *zap.Logger
 
 	// 미디어 정보
 	videoCodec string // H264 또는 H265
@@ -42,6 +42,10 @@ type Stream struct {
 
 	// 버퍼링
 	packetBuffer chan *rtp.Packet
+
+	// 스트림 종료 상태
+	closed     bool
+	closeMutex sync.RWMutex
 }
 
 // StreamSubscriber는 스트림 구독자 인터페이스
@@ -115,6 +119,11 @@ func (sm *StreamManager) RemoveStream(id string) error {
 		return fmt.Errorf("stream %s not found", id)
 	}
 
+	// 스트림을 닫힌 상태로 표시 (WritePacket 차단)
+	stream.closeMutex.Lock()
+	stream.closed = true
+	stream.closeMutex.Unlock()
+
 	// 패킷 버퍼 닫기
 	close(stream.packetBuffer)
 
@@ -125,6 +134,20 @@ func (sm *StreamManager) RemoveStream(id string) error {
 	)
 
 	return nil
+}
+
+// ListStreams는 모든 스트림 목록을 반환합니다
+func (sm *StreamManager) ListStreams() map[string]*Stream {
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	// 복사본 반환 (외부에서 맵을 수정하지 못하도록)
+	streams := make(map[string]*Stream, len(sm.streams))
+	for id, stream := range sm.streams {
+		streams[id] = stream
+	}
+
+	return streams
 }
 
 // Close는 스트림 관리자를 종료합니다
@@ -143,6 +166,14 @@ func (sm *StreamManager) Close() {
 
 // WritePacket은 스트림에 RTP 패킷을 씁니다
 func (s *Stream) WritePacket(pkt *rtp.Packet) error {
+	// 스트림이 닫혔는지 확인
+	s.closeMutex.RLock()
+	if s.closed {
+		s.closeMutex.RUnlock()
+		return fmt.Errorf("stream %s is closed", s.id)
+	}
+	s.closeMutex.RUnlock()
+
 	select {
 	case s.packetBuffer <- pkt:
 		s.statsMutex.Lock()
@@ -157,6 +188,15 @@ func (s *Stream) WritePacket(pkt *rtp.Packet) error {
 		case <-s.packetBuffer:
 		default:
 		}
+
+		// 다시 닫혔는지 확인 (경쟁 조건 방지)
+		s.closeMutex.RLock()
+		if s.closed {
+			s.closeMutex.RUnlock()
+			return fmt.Errorf("stream %s is closed", s.id)
+		}
+		s.closeMutex.RUnlock()
+
 		s.packetBuffer <- pkt
 		return nil
 	}
@@ -266,4 +306,14 @@ func (s *Stream) GetVideoCodec() string {
 	s.codecMutex.RLock()
 	defer s.codecMutex.RUnlock()
 	return s.videoCodec
+}
+
+// GetID는 스트림 ID를 반환합니다
+func (s *Stream) GetID() string {
+	return s.id
+}
+
+// GetName은 스트림 이름을 반환합니다
+func (s *Stream) GetName() string {
+	return s.name
 }

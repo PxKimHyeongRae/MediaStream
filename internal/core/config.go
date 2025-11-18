@@ -9,16 +9,23 @@ import (
 
 // Config는 전체 애플리케이션 설정을 담는 구조체
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	// Paths removed - now using external API
-	API         APIConfig         `yaml:"api"`
-	RTSP        RTSPConfig        `yaml:"rtsp"`
-	WebRTC      WebRTCConfig      `yaml:"webrtc"`
-	HLS         HLSConfig         `yaml:"hls"`
-	Media       MediaConfig       `yaml:"media"`
-	Logging     LoggingConfig     `yaml:"logging"`
-	Metrics     MetricsConfig     `yaml:"metrics"`
-	Performance PerformanceConfig `yaml:"performance"`
+	Server   ServerConfig   `yaml:"server"`
+	Database DatabaseConfig `yaml:"database"`
+	// API는 선택적 (외부 API 연동 시에만 사용)
+	API         *APIConfig            `yaml:"api,omitempty"`
+	Paths       map[string]PathConfig `yaml:"paths"` // mediaMTX style paths configuration
+	RTSP        RTSPConfig            `yaml:"rtsp"`
+	WebRTC      WebRTCConfig          `yaml:"webrtc"`
+	HLS         HLSConfig             `yaml:"hls"`
+	Media       MediaConfig           `yaml:"media"`
+	Logging     LoggingConfig         `yaml:"logging"`
+	Metrics     MetricsConfig         `yaml:"metrics"`
+	Performance PerformanceConfig     `yaml:"performance"`
+}
+
+// DatabaseConfig는 데이터베이스 설정
+type DatabaseConfig struct {
+	Path string `yaml:"path"` // SQLite 파일 경로
 }
 
 // APIConfig는 외부 API 설정
@@ -74,10 +81,11 @@ type TestStreamConfig struct {
 }
 
 type RTSPClientConfig struct {
-	Timeout      int  `yaml:"timeout"`
-	RetryCount   int  `yaml:"retry_count"`
-	RetryDelay   int  `yaml:"retry_delay"`
-	TCPTransport bool `yaml:"tcp_transport"`
+	Timeout         int  `yaml:"timeout"`
+	RetryCount      int  `yaml:"retry_count"`
+	RetryDelay      int  `yaml:"retry_delay"`
+	TCPTransport    bool `yaml:"tcp_transport"`
+	OnDemandWaitSec int  `yaml:"on_demand_wait_sec"` // 온디맨드 스트림 시작 대기 시간 (초)
 }
 
 type RTSPPoolConfig struct {
@@ -171,12 +179,24 @@ func LoadConfig(path string) (*Config, error) {
 
 // setDefaults는 설정의 기본값을 설정합니다
 func (c *Config) setDefaults() {
-	// API 설정 기본값
-	if c.API.RequestTimeoutSec == 0 {
-		c.API.RequestTimeoutSec = 30 // 30초
+	// Database 설정 기본값
+	if c.Database.Path == "" {
+		c.Database.Path = "data/streams.db"
 	}
-	if c.API.OnDemandWaitSec == 0 {
-		c.API.OnDemandWaitSec = 2 // 2초
+
+	// API 설정 기본값 (API가 활성화된 경우에만)
+	if c.API != nil && c.API.Enabled {
+		if c.API.RequestTimeoutSec == 0 {
+			c.API.RequestTimeoutSec = 30 // 30초
+		}
+		if c.API.OnDemandWaitSec == 0 {
+			c.API.OnDemandWaitSec = 2 // 2초
+		}
+	}
+
+	// RTSP 클라이언트 기본값
+	if c.RTSP.Client.OnDemandWaitSec == 0 {
+		c.RTSP.Client.OnDemandWaitSec = 2 // 2초 (온디맨드 스트림 시작 대기)
 	}
 
 	// HLS 설정 기본값

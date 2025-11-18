@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/cctv3/internal/cctv"
+	// "github.com/yourusername/cctv3/internal/cctv" // AIOT API 관련 - 향후 재사용을 위해 주석 처리
+	"github.com/yourusername/cctv3/internal/core"
+	"github.com/yourusername/cctv3/internal/database"
 	"github.com/yourusername/cctv3/internal/hls"
 	"go.uber.org/zap"
 )
@@ -23,8 +25,18 @@ type Server struct {
 	statsHandler       func() map[string]interface{}
 	websocketHandler   func(http.ResponseWriter, *http.Request)
 	startStreamHandler func(streamID string) error // 스트림 시작 콜백
-	cctvManager        cctv.Provider
-	hlsManager         *hls.Manager
+	stopStreamHandler  func(streamID string) error // 스트림 정지 콜백
+
+	// Database repository for CRUD operations
+	streamRepo *database.StreamRepository
+
+	// Stream manager for runtime streams
+	streamManager *core.StreamManager
+
+	// AIOT API 관련 (향후 재사용을 위해 주석 처리)
+	// cctvManager cctv.Provider
+
+	hlsManager *hls.Manager
 }
 
 // ServerConfig는 API 서버 설정
@@ -36,8 +48,18 @@ type ServerConfig struct {
 	StatsHandler       func() map[string]interface{}
 	WebSocketHandler   func(http.ResponseWriter, *http.Request)
 	StartStreamHandler func(streamID string) error // 스트림 시작 콜백
-	CCTVManager        cctv.Provider
-	HLSManager         *hls.Manager
+	StopStreamHandler  func(streamID string) error // 스트림 정지 콜백
+
+	// Database repository for CRUD operations
+	StreamRepository *database.StreamRepository
+
+	// Stream manager for runtime streams
+	StreamManager *core.StreamManager
+
+	// AIOT API 관련 (향후 재사용을 위해 주석 처리)
+	// CCTVManager cctv.Provider
+
+	HLSManager *hls.Manager
 }
 
 // NewServer는 새로운 API 서버를 생성합니다
@@ -61,8 +83,11 @@ func NewServer(config ServerConfig) *Server {
 		statsHandler:       config.StatsHandler,
 		websocketHandler:   config.WebSocketHandler,
 		startStreamHandler: config.StartStreamHandler,
-		cctvManager:        config.CCTVManager,
-		hlsManager:         config.HLSManager,
+		stopStreamHandler:  config.StopStreamHandler,
+		streamRepo:         config.StreamRepository,
+		streamManager:      config.StreamManager,
+		// cctvManager:        config.CCTVManager, // AIOT API 관련 - 향후 재사용을 위해 주석 처리
+		hlsManager: config.HLSManager,
 	}
 
 	server.setupRoutes()
@@ -80,7 +105,20 @@ func (s *Server) setupRoutes() {
 	{
 		v1.GET("/health", s.handleHealth)
 		v1.GET("/stats", s.handleStats)
-		v1.POST("/sync", s.handleSync)
+
+		// AIOT API 관련 - 향후 재사용을 위해 주석 처리
+		// v1.POST("/sync", s.handleSync)
+
+		// Stream CRUD endpoints
+		streams := v1.Group("/streams")
+		{
+			streams.POST("", s.handleCreateStream)          // Create stream
+			streams.GET("", s.handleListStreams)            // List all streams
+			streams.GET("/:id", s.handleGetStream)          // Get single stream
+			streams.PUT("/:id", s.handleUpdateStream)       // Update stream
+			streams.DELETE("/:id", s.handleDeleteStream)    // Delete stream (stop RTSP client)
+			streams.POST("/:id/start", s.handleStartStream) // Start on-demand stream
+		}
 
 		// HLS API endpoints
 		hlsGroup := v1.Group("/hls")
@@ -180,52 +218,54 @@ func (s *Server) handleStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// AIOT API 관련 핸들러 - 향후 재사용을 위해 주석 처리
 // handleSync는 CCTV 목록 수동 동기화를 처리합니다
-func (s *Server) handleSync(c *gin.Context) {
-	if s.cctvManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "CCTV manager not available",
-		})
-		return
-	}
-
-	s.logger.Info("Manual sync requested")
-
-	if err := s.cctvManager.ManualSync(); err != nil {
-		s.logger.Error("Manual sync failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Sync failed: " + err.Error(),
-		})
-		return
-	}
-
-	// 동기화 완료 후 업데이트된 CCTV 목록 반환
-	cctvs := s.cctvManager.GetCCTVs()
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "CCTV list synchronized successfully",
-		"count":   len(cctvs),
-	})
-}
+// func (s *Server) handleSync(c *gin.Context) {
+// 	if s.cctvManager == nil {
+// 		c.JSON(http.StatusServiceUnavailable, gin.H{
+// 			"error": "CCTV manager not available",
+// 		})
+// 		return
+// 	}
+//
+// 	s.logger.Info("Manual sync requested")
+//
+// 	if err := s.cctvManager.ManualSync(); err != nil {
+// 		s.logger.Error("Manual sync failed", zap.Error(err))
+// 		c.JSON(http.StatusInternalServerError, gin.H{
+// 			"error": "Sync failed: " + err.Error(),
+// 		})
+// 		return
+// 	}
+//
+// 	// 동기화 완료 후 업데이트된 CCTV 목록 반환
+// 	cctvs := s.cctvManager.GetCCTVs()
+//
+// 	c.JSON(http.StatusOK, gin.H{
+// 		"status":  "success",
+// 		"message": "CCTV list synchronized successfully",
+// 		"count":   len(cctvs),
+// 	})
+// }
 
 // handlePathsList는 mediaMTX 스타일의 paths 목록을 반환합니다
 func (s *Server) handlePathsList(c *gin.Context) {
-	if s.cctvManager == nil {
+	// Database에서 모든 스트림 가져오기 (Single Source of Truth)
+	dbStreams, err := s.streamRepo.List()
+	if err != nil {
+		s.logger.Error("Failed to list streams from database", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "CCTV manager not available",
+			"error": "Failed to list streams: " + err.Error(),
 		})
 		return
 	}
 
-	cctvs := s.cctvManager.GetCCTVs()
-
-	// mediaMTX 스타일 응답으로 변환
-	items := make([]gin.H, 0, len(cctvs))
-	for _, cctv := range cctvs {
+	// mediaMTX 호환 형식으로 변환
+	items := make([]gin.H, 0, len(dbStreams))
+	for _, stream := range dbStreams {
 		items = append(items, gin.H{
-			"name":   cctv.Name,
-			"source": cctv.URL,
+			"name":   stream.ID, // mediaMTX는 name 필드에 ID 사용
+			"source": stream.Source,
 		})
 	}
 
@@ -242,17 +282,11 @@ func (s *Server) handlePathsList(c *gin.Context) {
 func (s *Server) handlePathAdd(c *gin.Context) {
 	pathName := c.Param("name")
 
-	if s.cctvManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "CCTV manager not available",
-		})
-		return
-	}
-
 	// 요청 바디 파싱
 	var request struct {
 		Source         string `json:"source" binding:"required"`
 		SourceOnDemand bool   `json:"sourceOnDemand"`
+		RTSPTransport  string `json:"rtspTransport"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -262,15 +296,38 @@ func (s *Server) handlePathAdd(c *gin.Context) {
 		return
 	}
 
+	// 기본값 설정
+	if request.RTSPTransport == "" {
+		request.RTSPTransport = "tcp"
+	}
+
 	s.logger.Info("Path add requested",
 		zap.String("name", pathName),
 		zap.String("source", request.Source),
 		zap.Bool("sourceOnDemand", request.SourceOnDemand),
 	)
 
-	// 현재는 외부 API 기반이므로 실제 추가는 지원하지 않음
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error": "Path addition not supported in API-based mode",
+	// 데이터베이스에 저장
+	stream := &database.Stream{
+		ID:             pathName,
+		Name:           pathName,
+		Source:         request.Source,
+		SourceOnDemand: request.SourceOnDemand,
+		RTSPTransport:  request.RTSPTransport,
+	}
+
+	if err := s.streamRepo.Create(stream); err != nil {
+		s.logger.Error("Failed to create stream", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create stream: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Path added successfully",
+		"name":    pathName,
 	})
 }
 
@@ -278,18 +335,20 @@ func (s *Server) handlePathAdd(c *gin.Context) {
 func (s *Server) handlePathDelete(c *gin.Context) {
 	pathName := c.Param("name")
 
-	if s.cctvManager == nil {
+	s.logger.Info("Path delete requested", zap.String("name", pathName))
+
+	if err := s.streamRepo.Delete(pathName); err != nil {
+		s.logger.Error("Failed to delete stream", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "CCTV manager not available",
+			"error": "Failed to delete stream: " + err.Error(),
 		})
 		return
 	}
 
-	s.logger.Info("Path delete requested", zap.String("name", pathName))
-
-	// 현재는 외부 API 기반이므로 실제 삭제는 지원하지 않음
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error": "Path deletion not supported in API-based mode",
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Path deleted successfully",
+		"name":    pathName,
 	})
 }
 
@@ -487,4 +546,292 @@ func (s *Server) handleHLSSegment(c *gin.Context) {
 
 	// gohlslib muxer의 Handle 메서드로 요청 전달
 	muxer.Handle(c.Writer, c.Request)
+}
+
+// ====================================================================================
+// CRUD API Handlers
+// ====================================================================================
+
+// handleCreateStream은 새로운 스트림을 생성합니다
+func (s *Server) handleCreateStream(c *gin.Context) {
+	var request database.Stream
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// ID가 없으면 Name을 ID로 사용
+	if request.ID == "" {
+		request.ID = request.Name
+	}
+
+	// 기본값 설정
+	if request.RTSPTransport == "" {
+		request.RTSPTransport = "tcp"
+	}
+
+	s.logger.Info("Creating new stream",
+		zap.String("id", request.ID),
+		zap.String("name", request.Name),
+		zap.Bool("source_on_demand", request.SourceOnDemand),
+	)
+
+	// 1. Database에 저장 (Single Source of Truth)
+	if err := s.streamRepo.Create(&request); err != nil {
+		s.logger.Error("Failed to create stream", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create stream: " + err.Error(),
+		})
+		return
+	}
+
+	// 2. StreamManager에 Stream 객체 생성 (필수!)
+	if s.streamManager != nil {
+		if _, err := s.streamManager.CreateStream(request.ID, request.Name); err != nil {
+			s.logger.Error("Failed to create stream in manager", zap.Error(err))
+			// Database는 이미 저장되었으므로 계속 진행
+		}
+	}
+
+	// 3. sourceOnDemand=false면 즉시 RTSP 클라이언트 시작
+	if !request.SourceOnDemand && s.startStreamHandler != nil {
+		if err := s.startStreamHandler(request.ID); err != nil {
+			s.logger.Error("Failed to start RTSP client for always-on stream",
+				zap.String("id", request.ID),
+				zap.Error(err),
+			)
+			// 에러가 나도 CREATE는 성공했으므로 201 반환
+		} else {
+			s.logger.Info("RTSP client started for always-on stream", zap.String("id", request.ID))
+		}
+	}
+
+	s.logger.Info("Stream created successfully", zap.String("id", request.ID))
+
+	c.JSON(http.StatusCreated, request)
+}
+
+// handleListStreams는 모든 스트림 목록을 반환합니다
+func (s *Server) handleListStreams(c *gin.Context) {
+	// Database에서 모든 스트림 가져오기 (Single Source of Truth)
+	dbStreams, err := s.streamRepo.List()
+	if err != nil {
+		s.logger.Error("Failed to list streams from database", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to list streams: " + err.Error(),
+		})
+		return
+	}
+
+	// 응답 데이터 구성 (runtime_info 추가)
+	streams := make([]gin.H, 0, len(dbStreams))
+	for _, dbStream := range dbStreams {
+		streamData := gin.H{
+			"id":               dbStream.ID,
+			"name":             dbStream.Name,
+			"source":           dbStream.Source,
+			"source_on_demand": dbStream.SourceOnDemand,
+			"rtsp_transport":   dbStream.RTSPTransport,
+			"created_at":       dbStream.CreatedAt,
+			"updated_at":       dbStream.UpdatedAt,
+		}
+
+		// StreamManager에서 runtime 정보 가져오기 (있으면)
+		if s.streamManager != nil {
+			if runtimeStream, err := s.streamManager.GetStream(dbStream.ID); err == nil {
+				packetsRecv, packetsSent, bytesRecv, bytesSent := runtimeStream.GetStats()
+				streamData["runtime_info"] = gin.H{
+					"is_active":        true,
+					"codec":            runtimeStream.GetVideoCodec(),
+					"subscriber_count": runtimeStream.GetSubscriberCount(),
+					"packets_received": packetsRecv,
+					"packets_sent":     packetsSent,
+					"bytes_received":   bytesRecv,
+					"bytes_sent":       bytesSent,
+				}
+			}
+		}
+
+		streams = append(streams, streamData)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"streams": streams,
+		"count":   len(streams),
+	})
+}
+
+// handleGetStream은 특정 스트림 정보를 반환합니다
+func (s *Server) handleGetStream(c *gin.Context) {
+	streamID := c.Param("id")
+
+	// Database에서 찾기 (Single Source of Truth)
+	dbStream, err := s.streamRepo.Get(streamID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Stream %s not found", streamID),
+		})
+		return
+	}
+
+	// 응답 데이터 구성
+	response := gin.H{
+		"id":               dbStream.ID,
+		"name":             dbStream.Name,
+		"source":           dbStream.Source,
+		"source_on_demand": dbStream.SourceOnDemand,
+		"rtsp_transport":   dbStream.RTSPTransport,
+		"created_at":       dbStream.CreatedAt,
+		"updated_at":       dbStream.UpdatedAt,
+	}
+
+	// StreamManager에서 runtime 정보 추가 (있으면)
+	if s.streamManager != nil {
+		if runtimeStream, err := s.streamManager.GetStream(streamID); err == nil {
+			packetsRecv, packetsSent, bytesRecv, bytesSent := runtimeStream.GetStats()
+			response["runtime_info"] = gin.H{
+				"is_active":        true,
+				"codec":            runtimeStream.GetVideoCodec(),
+				"subscriber_count": runtimeStream.GetSubscriberCount(),
+				"packets_received": packetsRecv,
+				"packets_sent":     packetsSent,
+				"bytes_received":   bytesRecv,
+				"bytes_sent":       bytesSent,
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// handleUpdateStream은 스트림 정보를 업데이트합니다
+func (s *Server) handleUpdateStream(c *gin.Context) {
+	streamID := c.Param("id")
+
+	var request database.Stream
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// ID는 URL 파라미터로부터 사용
+	request.ID = streamID
+
+	s.logger.Info("Updating stream",
+		zap.String("id", streamID),
+		zap.String("name", request.Name),
+		zap.String("source", request.Source),
+	)
+
+	// 1. Database 업데이트
+	if err := s.streamRepo.Update(&request); err != nil {
+		s.logger.Error("Failed to update stream", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to update stream: " + err.Error(),
+		})
+		return
+	}
+
+	// 2. 실행 중인 RTSP 클라이언트 재시작 (source가 변경되었을 경우)
+	// 먼저 정지
+	if s.stopStreamHandler != nil {
+		if err := s.stopStreamHandler(streamID); err != nil {
+			s.logger.Warn("Failed to stop stream for restart (may not be running)",
+				zap.String("id", streamID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// sourceOnDemand=false면 즉시 재시작
+	if !request.SourceOnDemand && s.startStreamHandler != nil {
+		if err := s.startStreamHandler(streamID); err != nil {
+			s.logger.Error("Failed to restart stream after update",
+				zap.String("id", streamID),
+				zap.Error(err),
+			)
+			// 에러가 나도 UPDATE는 성공했으므로 200 반환
+		} else {
+			s.logger.Info("Stream restarted successfully after update", zap.String("id", streamID))
+		}
+	}
+
+	c.JSON(http.StatusOK, request)
+}
+
+// handleDeleteStream은 스트림을 삭제합니다
+func (s *Server) handleDeleteStream(c *gin.Context) {
+	streamID := c.Param("id")
+
+	s.logger.Info("Deleting stream", zap.String("id", streamID))
+
+	// 1. Database에서 삭제
+	if err := s.streamRepo.Delete(streamID); err != nil {
+		s.logger.Error("Failed to delete stream from database", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to delete stream: " + err.Error(),
+		})
+		return
+	}
+
+	// 2. 실행 중인 RTSP 클라이언트 정지 (stopStreamHandler 사용)
+	if s.stopStreamHandler != nil {
+		if err := s.stopStreamHandler(streamID); err != nil {
+			s.logger.Warn("Failed to stop stream (may not be running)",
+				zap.String("id", streamID),
+				zap.Error(err),
+			)
+		} else {
+			s.logger.Info("Stream stopped successfully", zap.String("id", streamID))
+		}
+	}
+
+	// 3. StreamManager에서 제거
+	if s.streamManager != nil {
+		if err := s.streamManager.RemoveStream(streamID); err != nil {
+			s.logger.Warn("Failed to remove stream from manager",
+				zap.String("id", streamID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Stream deleted successfully",
+		"id":      streamID,
+	})
+}
+
+// handleStartStream은 온디맨드 스트림을 시작합니다
+func (s *Server) handleStartStream(c *gin.Context) {
+	streamID := c.Param("id")
+
+	s.logger.Info("Starting stream", zap.String("id", streamID))
+
+	if s.startStreamHandler == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Start stream handler not configured",
+		})
+		return
+	}
+
+	if err := s.startStreamHandler(streamID); err != nil {
+		s.logger.Error("Failed to start stream", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to start stream: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Stream started successfully",
+		"id":      streamID,
+	})
 }

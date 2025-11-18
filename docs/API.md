@@ -1,14 +1,14 @@
-# AIOT CCTV 스트리밍 서버 API 문서
+# RTSP to WebRTC 미디어 서버 API 문서
 
-> 외부 AIOT API를 통해 CCTV 목록을 동적으로 관리하고 WebRTC로 스트리밍하는 시스템입니다.
+> SQLite 데이터베이스 + config.yaml 기반 스트림 관리 및 WebRTC 스트리밍 시스템
 
 ## 📋 목차
 
 1. [개요](#개요)
 2. [시스템 아키텍처](#시스템-아키텍처)
-3. [API 엔드포인트](#api-엔드포인트)
-4. [WebSocket 시그널링](#websocket-시그널링)
-5. [외부 AIOT API 연동](#외부-aiot-api-연동)
+3. [스트림 관리 API](#스트림-관리-api)
+4. [API 엔드포인트](#api-엔드포인트)
+5. [WebSocket 시그널링](#websocket-시그널링)
 6. [사용 예시](#사용-예시)
 
 ---
@@ -17,8 +17,9 @@
 
 ### 시스템 특징
 
-- ✅ **동적 CCTV 관리**: 외부 AIOT API에서 CCTV 목록을 자동으로 가져옴
-- ✅ **수동 동기화**: `/api/v1/sync` 엔드포인트로 필요시 수동 동기화
+- ✅ **Dual Source Loading**: config.yaml + SQLite Database 통합 관리
+- ✅ **CRUD API**: 스트림 생성/조회/수정/삭제 REST API
+- ✅ **Runtime Info**: 실시간 코덱, 구독자 수, 패킷 통계 제공
 - ✅ **WebRTC 스트리밍**: RTSP를 WebRTC로 변환하여 브라우저에서 재생
 - ✅ **온디맨드 스트리밍**: 필요한 카메라만 RTSP 연결
 - ✅ **mediaMTX 호환**: mediaMTX 스타일 API 제공
@@ -27,7 +28,7 @@
 
 - **언어**: Go 1.23+
 - **프로토콜**: RTSP, WebRTC, WebSocket
-- **외부 API**: AIOT API (인증, CCTV 목록, 동기화)
+- **데이터베이스**: SQLite (`modernc.org/sqlite`)
 - **프레임워크**: Gin (HTTP), Gorilla WebSocket
 
 ---
@@ -35,41 +36,256 @@
 ## 시스템 아키텍처
 
 ```
-[외부 AIOT API]
-    ↓ HTTP/REST
-[CCTV Manager] ← 수동 동기화: POST /api/v1/sync
-    ↓
-[Stream Manager] ← CCTV 목록 관리
-    ↓
-[RTSP Client] ← 온디맨드 연결
-    ↓ RTP Packets
-[WebRTC Peer]
-    ↓ WebSocket Signaling
-[웹 브라우저] ← 실시간 영상 재생
+[config.yaml] ──┐
+                 ├─→ [Stream Loader]
+[SQLite DB] ─────┘        ↓
+                   [Stream Manager] ← Dual Source
+                          ↓
+                   [RTSP Client] ← 온디맨드 연결
+                          ↓ RTP Packets
+                   [WebRTC Peer]
+                          ↓ WebSocket Signaling
+                   [웹 브라우저] ← 실시간 영상 재생
 ```
+
+### 스트림 소스
+
+1. **config.yaml** - 정적 스트림 설정
+   - 서버 시작 시 자동 로드
+   - `source_type: "config"`
+   - 수정 시 서버 재시작 필요
+
+2. **SQLite Database** - 동적 스트림 관리
+   - CRUD API를 통해 실시간 추가/수정/삭제
+   - `source_type: "database"`
+   - 서버 재시작 없이 관리 가능
 
 ### 주요 컴포넌트
 
-1. **CCTV Manager** (`internal/cctv/manager.go`)
-   - 외부 AIOT API 연동
-   - 인증 (Sign-In)
-   - CCTV 목록 동기화 (수동)
-   - CCTV 목록 캐싱
+1. **Stream Repository** (`internal/database/stream_repository.go`)
+   - SQLite 기반 CRUD 작업
+   - 스트림 메타데이터 영구 저장
 
 2. **API Server** (`internal/api/server.go`)
-   - REST API 제공
+   - REST API 제공 (CRUD)
    - WebSocket 시그널링
-   - 정적 파일 서빙
+   - Dual Source 통합 조회
 
 3. **Stream Manager** (`internal/core/stream_manager.go`)
    - 스트림 생명주기 관리
    - Pub/Sub 패턴 구현
    - 다중 구독자 지원
+   - Runtime 정보 제공
 
 4. **WebRTC Manager** (`internal/webrtc/manager.go`)
    - WebRTC 피어 관리
    - 동적 코덱 선택 (H.264/H.265)
    - ICE 연결 처리
+
+---
+
+## 스트림 관리 API
+
+### 📌 스트림 CRUD
+
+#### 1. 스트림 생성 (Create)
+
+**POST** `/api/v1/streams`
+
+새로운 스트림을 데이터베이스에 추가합니다.
+
+**Request Body:**
+```json
+{
+  "id": "my-camera-1",
+  "name": "My Camera 1",
+  "source": "rtsp://user:pass@192.168.1.100:554/stream",
+  "source_on_demand": true,
+  "rtsp_transport": "tcp"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "my-camera-1",
+  "name": "My Camera 1",
+  "source": "rtsp://user:pass@192.168.1.100:554/stream",
+  "source_on_demand": true,
+  "rtsp_transport": "tcp",
+  "created_at": "2025-11-18T10:30:00+09:00",
+  "updated_at": "2025-11-18T10:30:00+09:00"
+}
+```
+
+#### 2. 스트림 목록 조회 (List)
+
+**GET** `/api/v1/streams`
+
+모든 스트림 목록을 조회합니다 (config.yaml + database 통합).
+
+**Response:**
+```json
+{
+  "count": 4,
+  "streams": [
+    {
+      "id": "CCTV-TEST1",
+      "name": "CCTV-TEST1",
+      "source": "runtime (config.yaml)",
+      "source_on_demand": true,
+      "rtsp_transport": "tcp",
+      "source_type": "config",
+      "runtime_info": {
+        "is_active": true,
+        "codec": "H265",
+        "subscriber_count": 2,
+        "packets_received": 12345,
+        "packets_sent": 12340,
+        "bytes_received": 5242880,
+        "bytes_sent": 5240000
+      }
+    },
+    {
+      "id": "my-camera-1",
+      "name": "My Camera 1",
+      "source": "rtsp://user:pass@192.168.1.100:554/stream",
+      "source_on_demand": true,
+      "rtsp_transport": "tcp",
+      "source_type": "database",
+      "created_at": "2025-11-18T10:30:00+09:00",
+      "updated_at": "2025-11-18T10:30:00+09:00",
+      "runtime_info": {
+        "is_active": false,
+        "codec": "",
+        "subscriber_count": 0,
+        "packets_received": 0,
+        "packets_sent": 0,
+        "bytes_received": 0,
+        "bytes_sent": 0
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+- `source_type`: `"config"` (config.yaml) 또는 `"database"` (SQLite)
+- `runtime_info`: 실행 중인 스트림의 실시간 정보
+  - `is_active`: 스트림 활성화 여부
+  - `codec`: 비디오 코덱 (H264/H265)
+  - `subscriber_count`: 현재 시청자 수
+  - `packets_received/sent`: RTP 패킷 통계
+  - `bytes_received/sent`: 데이터 전송량
+
+#### 3. 단일 스트림 조회 (Get)
+
+**GET** `/api/v1/streams/:id`
+
+특정 스트림의 상세 정보를 조회합니다.
+
+**Response (Database 스트림):**
+```json
+{
+  "id": "my-camera-1",
+  "name": "My Camera 1",
+  "source": "rtsp://user:pass@192.168.1.100:554/stream",
+  "source_on_demand": true,
+  "rtsp_transport": "tcp",
+  "source_type": "database",
+  "created_at": "2025-11-18T10:30:00+09:00",
+  "updated_at": "2025-11-18T10:30:00+09:00",
+  "runtime_info": {
+    "is_active": true,
+    "codec": "H264",
+    "subscriber_count": 1,
+    "packets_received": 5678,
+    "packets_sent": 5670,
+    "bytes_received": 2097152,
+    "bytes_sent": 2095000
+  }
+}
+```
+
+**Response (Config 스트림):**
+```json
+{
+  "id": "CCTV-TEST1",
+  "name": "CCTV-TEST1",
+  "source": "runtime (config.yaml)",
+  "source_on_demand": true,
+  "rtsp_transport": "tcp",
+  "source_type": "config",
+  "runtime_info": {
+    "is_active": true,
+    "codec": "H265",
+    "subscriber_count": 2,
+    "packets_received": 12345,
+    "packets_sent": 12340,
+    "bytes_received": 5242880,
+    "bytes_sent": 5240000
+  }
+}
+```
+
+#### 4. 스트림 수정 (Update)
+
+**PUT** `/api/v1/streams/:id`
+
+데이터베이스 스트림 정보를 수정합니다 (config.yaml 스트림은 수정 불가).
+
+**Request Body:**
+```json
+{
+  "name": "Updated Camera Name",
+  "source": "rtsp://user:newpass@192.168.1.100:554/stream",
+  "source_on_demand": false,
+  "rtsp_transport": "tcp"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "my-camera-1",
+  "name": "Updated Camera Name",
+  "source": "rtsp://user:newpass@192.168.1.100:554/stream",
+  "source_on_demand": false,
+  "rtsp_transport": "tcp",
+  "created_at": "2025-11-18T10:30:00+09:00",
+  "updated_at": "2025-11-18T11:00:00+09:00"
+}
+```
+
+#### 5. 스트림 삭제 (Delete)
+
+**DELETE** `/api/v1/streams/:id`
+
+데이터베이스 스트림을 삭제합니다 (config.yaml 스트림은 삭제 불가).
+
+**Response:**
+```json
+{
+  "status": "success",
+  "id": "my-camera-1",
+  "message": "Stream deleted successfully"
+}
+```
+
+#### 6. 온디맨드 스트림 시작
+
+**POST** `/api/v1/streams/:id/start`
+
+온디맨드 스트림을 시작합니다.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "stream_id": "my-camera-1",
+  "message": "Stream started successfully"
+}
+```
 
 ---
 
