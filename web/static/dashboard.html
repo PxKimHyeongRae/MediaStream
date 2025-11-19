@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCTV Dashboard - WebRTC + HLS Dual View</title>
+    <title>CCTV Dashboard - WebRTC View</title>
     <style>
         * {
             margin: 0;
@@ -181,7 +181,7 @@
         /* 듀얼 플레이어 레이아웃 */
         .dual-player-container {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            /*grid-template-columns: 1fr 1fr;*/
             gap: 2px;
             background: #0f1419;
         }
@@ -338,7 +338,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>📊 CCTV Dashboard - WebRTC + HLS</h1>
+            <h1>📊 CCTV Dashboard - WebRTC</h1>
             <div class="nav-links">
                 <a href="/">Original Demo</a>
                 <a href="/static/viewer.html">📹 Single Viewer</a>
@@ -361,10 +361,12 @@
                     <span class="summary-label">WebRTC 연결</span>
                     <span class="summary-value" id="webrtcConnected">0</span>
                 </div>
+                <!-- HLS 연결 통계 주석처리
                 <div class="summary-item">
                     <span class="summary-label">HLS 연결</span>
                     <span class="summary-value" id="hlsConnected">0</span>
                 </div>
+                -->
                 <div class="summary-item">
                     <span class="summary-label">전체 비트레이트</span>
                     <span class="summary-value" id="totalBitrate">0 kbps</span>
@@ -380,15 +382,16 @@
         </div>
     </div>
 
-    <!-- HLS.js 라이브러리 -->
+    <!-- HLS.js 라이브러리 주석처리
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    -->
 
     <script src="/static/js/websocket-manager.js"></script>
     <script src="/static/js/webrtc-engine.js"></script>
     <script>
         let streams = [];
         let webrtcEngines = {};
-        let hlsPlayers = {};
+        // let hlsPlayers = {}; // HLS 주석처리
         let totalBitrate = 0;
 
         // DOM 요소
@@ -398,7 +401,7 @@
         const refreshBtn = document.getElementById('refreshBtn');
         const totalStreamsEl = document.getElementById('totalStreams');
         const webrtcConnectedEl = document.getElementById('webrtcConnected');
-        const hlsConnectedEl = document.getElementById('hlsConnected');
+        // const hlsConnectedEl = document.getElementById('hlsConnected'); // HLS 주석처리
         const totalBitrateEl = document.getElementById('totalBitrate');
 
         // 초기화
@@ -493,7 +496,7 @@
                         </div>
                     </div>
 
-                    <!-- HLS Player -->
+                    <!-- HLS Player
                     <div class="player-section">
                         <div class="player-label hls">HLS</div>
                         <div class="camera-video-container">
@@ -503,7 +506,7 @@
                                 <div>HLS 준비 중...</div>
                             </div>
                         </div>
-                    </div>
+                    </div>-->
                 </div>
 
                 <div class="camera-info">
@@ -526,7 +529,7 @@
                         </div>
                     </div>
 
-                    <!-- HLS 통계 -->
+                    <!-- HLS 통계
                     <div class="info-section">
                         <div class="info-section-title">🟠 HLS Stats</div>
                         <div class="info-items">
@@ -543,27 +546,36 @@
                                 <div class="info-value" id="hls-buffer-${stream.name}">0s</div>
                             </div>
                         </div>
-                    </div>
+                    </div>-->
                 </div>
 
                 <div class="camera-controls">
                     <button onclick="connectCamera('${stream.name}')">연결</button>
                     <button class="disconnect" onclick="disconnectCamera('${stream.name}')">해제</button>
                     <button class="fullscreen-btn" onclick="toggleMute('${stream.name}', 'webrtc')">🔇 WebRTC 음소거</button>
+                    <!-- HLS 음소거 버튼 주석처리
                     <button class="fullscreen-btn" onclick="toggleMute('${stream.name}', 'hls')">🔇 HLS 음소거</button>
+                    -->
                 </div>
             `;
 
             return card;
         }
 
-        // 모두 연결
+        // 모두 연결 (병렬 처리)
         async function connectAll() {
-            console.log('Connecting all cameras...');
-            for (const stream of streams) {
-                await connectCamera(stream.name);
-                await new Promise(resolve => setTimeout(resolve, 500)); // 순차 연결
-            }
+            console.log('Connecting all cameras in parallel...');
+
+            // Promise.all로 모든 카메라 동시 연결
+            const connectPromises = streams.map(stream =>
+                connectCamera(stream.name).catch(err => {
+                    console.error(`Failed to connect ${stream.name}:`, err);
+                    // 개별 실패는 무시하고 계속 진행
+                })
+            );
+
+            await Promise.all(connectPromises);
+            console.log('All cameras connection initiated');
         }
 
         // 모두 연결 해제
@@ -592,8 +604,8 @@
                 // WebRTC 연결
                 await connectWebRTC(streamId);
 
-                // HLS 연결
-                await connectHLS(streamId);
+                // HLS 연결 주석처리
+                // await connectHLS(streamId);
 
             } catch (error) {
                 console.error(`Failed to connect camera ${streamId}:`, error);
@@ -656,7 +668,7 @@
                         const response = await fetch(`/api/v1/streams/${streamId}`);
                         if (response.ok) {
                             const streamData = await response.json();
-                            document.getElementById(`webrtc-codec-${streamId}`).textContent = streamData.codec || '알 수 없음';
+                            document.getElementById(`webrtc-codec-${streamId}`).textContent = streamData.runtime_info.codec || '알 수 없음';
                         }
                     } catch (error) {
                         console.error(`Failed to fetch codec info for ${streamId}:`, error);
@@ -772,7 +784,8 @@
                 document.getElementById(`overlay-webrtc-${streamId}`).classList.remove('hidden');
             }
 
-            // HLS 연결 해제
+            // HLS 연결 해제 주석처리
+            /*
             const hls = hlsPlayers[streamId];
             if (hls) {
                 hls.destroy();
@@ -780,6 +793,7 @@
                 document.getElementById(`overlay-hls-${streamId}`).classList.remove('hidden');
                 document.getElementById(`hls-status-${streamId}`).textContent = '대기';
             }
+            */
 
             updateCameraStatus(streamId, 'disconnected', '대기 중');
             updateSummary();
@@ -807,10 +821,10 @@
         // 요약 업데이트
         function updateSummary() {
             const webrtcConnected = Object.values(webrtcEngines).filter(e => e.isConnected()).length;
-            const hlsConnected = Object.keys(hlsPlayers).length;
+            // const hlsConnected = Object.keys(hlsPlayers).length; // HLS 주석처리
 
             webrtcConnectedEl.textContent = webrtcConnected;
-            hlsConnectedEl.textContent = hlsConnected;
+            // hlsConnectedEl.textContent = hlsConnected; // HLS 주석처리
         }
 
         // 전체 비트레이트 계산

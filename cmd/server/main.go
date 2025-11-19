@@ -232,7 +232,8 @@ func initializeApplication(config *core.Config) (*Application, error) {
 	}
 
 	// 1. 스트림 관리자 초기화 (먼저 초기화해야 함)
-	app.streamManager = core.NewStreamManager(logger.Log)
+	// Phase 2.3: config 기반 비디오 버퍼 크기 전달
+	app.streamManager = core.NewStreamManager(logger.Log, config.Media.Buffer.VideoBufferSize)
 	logger.Info("Stream manager initialized")
 
 	// 1.5. 데이터베이스 초기화 (API 서버보다 먼저!)
@@ -744,9 +745,33 @@ func (app *Application) handleWebRTCOffer(offer string, streamID string, client 
 			return "", fmt.Errorf("failed to start stream: %w", err)
 		}
 
-		// 잠시 대기하여 RTSP 연결이 안정화되도록 함
-		waitTime := time.Duration(app.config.RTSP.Client.OnDemandWaitSec) * time.Second
-		time.Sleep(waitTime)
+		// 스트림이 준비될 때까지 대기 (코덱이 설정되면 준비 완료)
+		// 폴링 방식으로 변경하여 불필요한 대기 시간 최소화
+		maxWaitTime := time.Duration(app.config.RTSP.Client.OnDemandWaitSec) * time.Second
+		pollInterval := 100 * time.Millisecond
+		elapsed := time.Duration(0)
+
+		for elapsed < maxWaitTime {
+			codec := stream.GetVideoCodec()
+			if codec != "" {
+				logger.Info("Stream ready with codec",
+					zap.String("stream_id", streamID),
+					zap.String("codec", codec),
+					zap.Duration("wait_time", elapsed),
+				)
+				break
+			}
+			time.Sleep(pollInterval)
+			elapsed += pollInterval
+		}
+
+		// 타임아웃 체크 (코덱이 여전히 없으면 경고)
+		if stream.GetVideoCodec() == "" {
+			logger.Warn("Stream codec not detected after wait, proceeding anyway",
+				zap.String("stream_id", streamID),
+				zap.Duration("waited", elapsed),
+			)
+		}
 	}
 
 	// WebRTC 피어 생성

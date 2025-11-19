@@ -13,14 +13,136 @@ paths:
     source: rtsp://admin:live0416@192.168.10.53:554/Streaming/Channels/101
     sourceOnDemand: true
     rtspTransport: tcp
-#  CCTV-TEST2:
-#    source: rtsp://admin:live0416@192.168.10.54:554/Streaming/Channels/101
-#    sourceOnDemand: true
-#    rtspTransport: tcp
-#  CCTV-TEST3:
-#    source: rtsp://admin:live0416@192.168.10.55:554/Streaming/Channels/101
-#    sourceOnDemand: true
-#    rtspTransport: tcp
+  CCTV-TEST2:
+    source: rtsp://admin:live0416@192.168.10.54:554/Streaming/Channels/101
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-TEST3:
+    source: rtsp://admin:live0416@192.168.10.55:554/Streaming/Channels/101
+    sourceOnDemand: true
+    rtspTransport: tcp
+
+  CCTV-JEJU1-31:
+    source: rtsp://admin:live0416@221.162.21.246:31554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-32:
+    source: rtsp://admin:live0416@221.162.21.246:32554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-33:
+    source: rtsp://admin:live0416@221.162.21.246:33554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-34:
+    source: rtsp://admin:live0416@221.162.21.246:34554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-35:
+    source: rtsp://admin:live0416@221.162.21.246:35554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-36:
+    source: rtsp://admin:live0416@221.162.21.246:36554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-37:
+    source: rtsp://admin:live0416@221.162.21.246:37554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-38:
+    source: rtsp://admin:live0416@221.162.21.246:38554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-39:
+    source: rtsp://admin:live0416@221.162.21.246:39554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-40:
+    source: rtsp://admin:live0416@221.162.21.246:40554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-41:
+    source: rtsp://admin:live0416@221.162.21.246:41554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-42:
+    source: rtsp://admin:live0416@221.162.21.246:42554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-43:
+    source: rtsp://admin:live0416@221.162.21.246:43554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-44:
+    source: rtsp://admin:live0416@221.162.21.246:44554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU1-45:
+    source: rtsp://admin:live0416@221.162.21.246:45554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+
+  CCTV-JEJU2-31:
+    source: rtsp://admin:live0416@121.189.117.243:31554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-32:
+    source: rtsp://admin:live0416@121.189.117.243:32554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-33:
+    source: rtsp://admin:live0416@121.189.117.243:33554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-34:
+    source: rtsp://admin:live0416@121.189.117.243:34554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-35:
+    source: rtsp://admin:live0416@121.189.117.243:35554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-36:
+    source: rtsp://admin:live0416@121.189.117.243:36554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-37:
+    source: rtsp://admin:live0416@121.189.117.243:37554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-38:
+    source: rtsp://admin:live0416@121.189.117.243:38554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-39:
+    source: rtsp://admin:live0416@121.189.117.243:39554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-40:
+    source: rtsp://admin:live0416@121.189.117.243:40554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-41:
+    source: rtsp://admin:live0416@121.189.117.243:41554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-42:
+    source: rtsp://admin:live0416@121.189.117.243:42554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-43:
+    source: rtsp://admin:live0416@121.189.117.243:43554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-44:
+    source: rtsp://admin:live0416@121.189.117.243:44554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
+  CCTV-JEJU2-45:
+    source: rtsp://admin:live0416@121.189.117.243:45554/profile1/media.smp
+    sourceOnDemand: true
+    rtspTransport: tcp
 
 # 데이터베이스 설정
 database:
@@ -54,12 +176,12 @@ rtsp:
 
   # RTSP 클라이언트 설정
   client:
-    # 연결 타임아웃 (초)
-    timeout: 10
+    # 연결 타임아웃 (초) - 외부 IP 연결을 위해 증가
+    timeout: 30
     # 재연결 시도 횟수
     retry_count: 3
-    # 재연결 대기 시간 (초)
-    retry_delay: 5
+    # 재연결 대기 시간 (초) - 실패 시 더 빨리 재시도
+    retry_delay: 3
     # TCP 전송 사용 (true) 또는 UDP (false)
     tcp_transport: true
     # 온디맨드 스트림 시작 대기 시간 (초)
@@ -100,21 +222,21 @@ hls:
   # 세그먼트 길이 (초) - 카메라 IDR 간격에 맞춤
   segment_duration: 2
   # 플레이리스트에 유지할 세그먼트 수 - 버퍼 안정성을 위해 증가
-  segment_count: 5
+  segment_count: 6
   # 세그먼트 저장 디렉토리
   output_dir: "hls"
-  # 디스크에 유지할 최대 세그먼트 수
-  cleanup_threshold: 20
+  # 디스크에 유지할 최대 세그먼트 수 - 다중 스트림을 위해 증가
+  cleanup_threshold: 30
   # 세그먼트 압축 활성화 (gzip)
   enable_compression: false
 
 media:
   # 미디어 버퍼 설정
   buffer:
-    # 비디오 버퍼 크기 (패킷 수)
-    video_buffer_size: 500
+    # 비디오 버퍼 크기 (패킷 수) - 다중 스트림을 위해 증가
+    video_buffer_size: 1000
     # 오디오 버퍼 크기 (패킷 수)
-    audio_buffer_size: 200
+    audio_buffer_size: 400
 
   # 코덱 설정
   codec:
@@ -147,11 +269,11 @@ metrics:
   interval: 10
 
 performance:
-  # 고루틴 풀 크기
-  worker_pool_size: 100
-  # 읽기 버퍼 크기 (bytes)
-  read_buffer_size: 4096
-  # 쓰기 버퍼 크기 (bytes)
-  write_buffer_size: 4096
-  # GC 퍼센트 (기본값 100)
+  # 고루틴 풀 크기 - 다중 스트림 동시 처리를 위해 증가
+  worker_pool_size: 200
+  # 읽기 버퍼 크기 (bytes) - 성능 향상을 위해 증가
+  read_buffer_size: 8192
+  # 쓰기 버퍼 크기 (bytes) - 성능 향상을 위해 증가
+  write_buffer_size: 8192
+  # GC 퍼센트 (기본값 100) - 메모리 압박 감소
   gc_percent: 50

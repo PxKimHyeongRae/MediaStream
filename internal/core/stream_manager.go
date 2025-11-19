@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pion/rtp"
 	"go.uber.org/zap"
@@ -17,6 +18,18 @@ type StreamManager struct {
 
 	streams map[string]*Stream
 	mutex   sync.RWMutex
+
+	// Phase 2.3: config 기반 버퍼 크기
+	videoBufferSize int
+}
+
+// subscriberWorker는 구독자와 전용 워커를 관리합니다
+type subscriberWorker struct {
+	sub        StreamSubscriber
+	packetChan chan *rtp.Packet
+	ctx        context.Context
+	cancel     context.CancelFunc
+	logger     *zap.Logger
 }
 
 // Stream은 단일 미디어 스트림을 나타냅니다
@@ -29,16 +42,15 @@ type Stream struct {
 	videoCodec string // H264 또는 H265
 	codecMutex sync.RWMutex
 
-	// 구독자 관리
-	subscribers map[string]StreamSubscriber
+	// 구독자 관리 (워커 풀 패턴)
+	subscribers map[string]*subscriberWorker
 	subMutex    sync.RWMutex
 
-	// 통계
-	packetsReceived uint64
-	packetsSent     uint64
-	bytesReceived   uint64
-	bytesSent       uint64
-	statsMutex      sync.RWMutex
+	// 통계 (atomic으로 lock-free)
+	packetsReceived atomic.Uint64
+	packetsSent     atomic.Uint64
+	bytesReceived   atomic.Uint64
+	bytesSent       atomic.Uint64
 
 	// 버퍼링
 	packetBuffer chan *rtp.Packet
@@ -46,6 +58,12 @@ type Stream struct {
 	// 스트림 종료 상태
 	closed     bool
 	closeMutex sync.RWMutex
+
+	// 컨텍스트
+	ctx context.Context
+
+	// 워커 슬라이스 풀 (Phase 2.1 최적화 - 메모리 재사용)
+	workerSlicePool sync.Pool
 }
 
 // StreamSubscriber는 스트림 구독자 인터페이스
@@ -55,14 +73,20 @@ type StreamSubscriber interface {
 }
 
 // NewStreamManager는 새로운 스트림 관리자를 생성합니다
-func NewStreamManager(logger *zap.Logger) *StreamManager {
+func NewStreamManager(logger *zap.Logger, videoBufferSize int) *StreamManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Phase 2.3: 기본값 설정
+	if videoBufferSize <= 0 {
+		videoBufferSize = 500 // 기본값
+	}
+
 	return &StreamManager{
-		ctx:       ctx,
-		ctxCancel: cancel,
-		logger:    logger,
-		streams:   make(map[string]*Stream),
+		ctx:             ctx,
+		ctxCancel:       cancel,
+		logger:          logger,
+		streams:         make(map[string]*Stream),
+		videoBufferSize: videoBufferSize,
 	}
 }
 
@@ -79,14 +103,21 @@ func (sm *StreamManager) CreateStream(id, name string) (*Stream, error) {
 		id:           id,
 		name:         name,
 		logger:       sm.logger.With(zap.String("stream_id", id)),
-		subscribers:  make(map[string]StreamSubscriber),
-		packetBuffer: make(chan *rtp.Packet, 500),
+		subscribers:  make(map[string]*subscriberWorker),
+		packetBuffer: make(chan *rtp.Packet, sm.videoBufferSize), // Phase 2.3: config 기반 버퍼 크기
+		ctx:          sm.ctx,
+		workerSlicePool: sync.Pool{
+			New: func() interface{} {
+				// 초기 capacity 20 (예상 구독자 수)
+				return make([]*subscriberWorker, 0, 20)
+			},
+		},
 	}
 
 	sm.streams[id] = stream
 
-	// 패킷 배포 고루틴 시작
-	go stream.distributePackets(sm.ctx)
+	// 패킷 배포 고루틴 시작 (워커 풀 패턴)
+	go stream.distributePackets()
 
 	sm.logger.Info("Stream created",
 		zap.String("stream_id", id),
@@ -176,10 +207,9 @@ func (s *Stream) WritePacket(pkt *rtp.Packet) error {
 
 	select {
 	case s.packetBuffer <- pkt:
-		s.statsMutex.Lock()
-		s.packetsReceived++
-		s.bytesReceived += uint64(len(pkt.Payload))
-		s.statsMutex.Unlock()
+		// atomic으로 lock-free 통계 업데이트
+		s.packetsReceived.Add(1)
+		s.bytesReceived.Add(uint64(len(pkt.Payload)))
 		return nil
 	default:
 		// 버퍼 가득 참 - 가장 오래된 패킷 드롭
@@ -202,7 +232,7 @@ func (s *Stream) WritePacket(pkt *rtp.Packet) error {
 	}
 }
 
-// Subscribe는 스트림 구독을 추가합니다
+// Subscribe는 스트림 구독을 추가합니다 (워커 풀 패턴)
 func (s *Stream) Subscribe(subscriber StreamSubscriber) error {
 	s.subMutex.Lock()
 	defer s.subMutex.Unlock()
@@ -212,9 +242,22 @@ func (s *Stream) Subscribe(subscriber StreamSubscriber) error {
 		return fmt.Errorf("subscriber %s already exists", id)
 	}
 
-	s.subscribers[id] = subscriber
+	// 구독자별 전용 워커 생성
+	ctx, cancel := context.WithCancel(s.ctx)
+	worker := &subscriberWorker{
+		sub:        subscriber,
+		packetChan: make(chan *rtp.Packet, 100), // 구독자별 버퍼
+		ctx:        ctx,
+		cancel:     cancel,
+		logger:     s.logger.With(zap.String("subscriber_id", id)),
+	}
 
-	s.logger.Info("Subscriber added",
+	s.subscribers[id] = worker
+
+	// 워커 고루틴 시작 (구독자당 1개만 유지)
+	go worker.run(s)
+
+	s.logger.Info("Subscriber added with dedicated worker",
 		zap.String("subscriber_id", id),
 		zap.Int("total_subscribers", len(s.subscribers)),
 	)
@@ -227,9 +270,14 @@ func (s *Stream) Unsubscribe(subscriberID string) error {
 	s.subMutex.Lock()
 	defer s.subMutex.Unlock()
 
-	if _, exists := s.subscribers[subscriberID]; !exists {
+	worker, exists := s.subscribers[subscriberID]
+	if !exists {
 		return fmt.Errorf("subscriber %s not found", subscriberID)
 	}
+
+	// 워커 종료
+	worker.cancel()
+	close(worker.packetChan)
 
 	delete(s.subscribers, subscriberID)
 
@@ -241,49 +289,80 @@ func (s *Stream) Unsubscribe(subscriberID string) error {
 	return nil
 }
 
-// distributePackets는 패킷을 모든 구독자에게 배포합니다
-func (s *Stream) distributePackets(ctx context.Context) {
+// distributePackets는 패킷을 모든 구독자 워커에게 배포합니다 (워커 풀 패턴 + sync.Pool)
+func (s *Stream) distributePackets() {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			return
 		case pkt, ok := <-s.packetBuffer:
 			if !ok {
 				return
 			}
 
+			// sync.Pool에서 워커 슬라이스 가져오기 (Phase 2.1 최적화)
+			workers := s.workerSlicePool.Get().([]*subscriberWorker)
+			workers = workers[:0] // 길이 0으로 리셋 (capacity 유지)
+
+			// 구독자 워커 목록 복사 (읽기 락 최소화)
 			s.subMutex.RLock()
-			subscribers := make([]StreamSubscriber, 0, len(s.subscribers))
-			for _, sub := range s.subscribers {
-				subscribers = append(subscribers, sub)
+			for _, worker := range s.subscribers {
+				workers = append(workers, worker)
 			}
 			s.subMutex.RUnlock()
 
-			// 각 구독자에게 비동기 전달
-			for _, sub := range subscribers {
-				go func(subscriber StreamSubscriber) {
-					if err := subscriber.OnPacket(pkt); err != nil {
-						s.logger.Error("Failed to send packet to subscriber",
-							zap.String("subscriber_id", subscriber.GetID()),
-							zap.Error(err),
-						)
-					} else {
-						s.statsMutex.Lock()
-						s.packetsSent++
-						s.bytesSent += uint64(len(pkt.Payload))
-						s.statsMutex.Unlock()
-					}
-				}(sub)
+			// 각 워커의 채널에 패킷 전송 (고루틴 생성 없음!)
+			for _, worker := range workers {
+				select {
+				case worker.packetChan <- pkt:
+					// 성공적으로 전송
+				default:
+					// 워커 버퍼 가득 참, 패킷 드롭 (블로킹 방지)
+					worker.logger.Debug("Worker buffer full, dropping packet")
+				}
+			}
+
+			// sync.Pool에 슬라이스 반환 (재사용)
+			s.workerSlicePool.Put(workers)
+		}
+	}
+}
+
+// run은 구독자 워커의 메인 루프 (구독자당 1개의 고루틴만 유지)
+func (w *subscriberWorker) run(s *Stream) {
+	for {
+		select {
+		case <-w.ctx.Done():
+			w.logger.Debug("Worker stopped")
+			return
+		case pkt, ok := <-w.packetChan:
+			if !ok {
+				w.logger.Debug("Worker channel closed")
+				return
+			}
+
+			// 패킷 전송
+			if err := w.sub.OnPacket(pkt); err != nil {
+				// "peer not connected" 에러는 일시적이므로 DEBUG 레벨로 로깅
+				if err.Error() == "peer not connected or track not ready" {
+					w.logger.Debug("Peer not ready yet, skipping packet")
+				} else {
+					w.logger.Error("Failed to send packet to subscriber",
+						zap.Error(err),
+					)
+				}
+			} else {
+				// atomic으로 통계 업데이트 (lock-free)
+				s.packetsSent.Add(1)
+				s.bytesSent.Add(uint64(len(pkt.Payload)))
 			}
 		}
 	}
 }
 
-// GetStats는 스트림 통계를 반환합니다
+// GetStats는 스트림 통계를 반환합니다 (atomic, lock-free)
 func (s *Stream) GetStats() (packetsReceived, packetsSent, bytesReceived, bytesSent uint64) {
-	s.statsMutex.RLock()
-	defer s.statsMutex.RUnlock()
-	return s.packetsReceived, s.packetsSent, s.bytesReceived, s.bytesSent
+	return s.packetsReceived.Load(), s.packetsSent.Load(), s.bytesReceived.Load(), s.bytesSent.Load()
 }
 
 // GetSubscriberCount는 구독자 수를 반환합니다

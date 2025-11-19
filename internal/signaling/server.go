@@ -188,7 +188,8 @@ func (c *Client) handleMessage(data []byte) {
 		if streamID == "" {
 			streamID = offerPayload.StreamID
 		}
-		c.handleOffer(offerPayload.SDP, streamID, msg.StreamID)
+		// 비동기 처리: 여러 클라이언트가 동시에 연결할 수 있도록
+		go c.handleOffer(offerPayload.SDP, streamID, msg.StreamID)
 	case "ice":
 		// ICE candidate는 object로 전달됨
 		c.handleICE(msg.Payload, msg.StreamID)

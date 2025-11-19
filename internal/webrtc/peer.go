@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
@@ -18,6 +18,7 @@ type Peer struct {
 	id        string
 	streamID  string
 	logger    *zap.Logger
+	sharedAPI *webrtc.API // 공유 API (싱글톤)
 
 	// 상태
 	ctx       context.Context
@@ -27,9 +28,9 @@ type Peer struct {
 	closeOnce sync.Once // Close가 여러 번 호출되는 것을 방지
 
 	// pion/webrtc
-	pc           *webrtc.PeerConnection
-	videoTrack   *webrtc.TrackLocalStaticRTP
-	audioTrack   *webrtc.TrackLocalStaticRTP
+	pc         *webrtc.PeerConnection
+	videoTrack *webrtc.TrackLocalStaticRTP
+	audioTrack *webrtc.TrackLocalStaticRTP
 
 	// 콜백
 	onClose func(peerID string)
@@ -42,9 +43,10 @@ type Peer struct {
 
 // PeerConfig는 WebRTC 피어 설정
 type PeerConfig struct {
-	StreamID string
-	Logger   *zap.Logger
-	OnClose  func(peerID string)
+	StreamID  string
+	Logger    *zap.Logger
+	SharedAPI *webrtc.API // 공유 API (싱글톤)
+	OnClose   func(peerID string)
 }
 
 // NewPeer는 새로운 WebRTC 피어를 생성합니다
@@ -56,6 +58,7 @@ func NewPeer(config PeerConfig) *Peer {
 		id:        id,
 		streamID:  config.StreamID,
 		logger:    config.Logger.With(zap.String("peer_id", id)),
+		sharedAPI: config.SharedAPI, // 공유 API 저장
 		ctx:       ctx,
 		ctxCancel: cancel,
 		onClose:   config.OnClose,
@@ -109,10 +112,13 @@ func (p *Peer) CreateOffer(offer string, streamCodec string) (answer string, err
 
 	p.logger.Info("Waiting for ICE gathering to complete...")
 
-	// ICE gathering 완료 대기
-	<-gatherComplete
-
-	p.logger.Info("ICE gathering complete")
+	// ICE gathering 완료 대기 (Phase 2.2: 타임아웃 추가 - 5초)
+	select {
+	case <-gatherComplete:
+		p.logger.Info("ICE gathering complete")
+	case <-time.After(5 * time.Second):
+		p.logger.Warn("ICE gathering timeout (5s), proceeding with partial candidates")
+	}
 
 	// 완전한 SDP 반환 (ICE candidates 포함)
 	finalAnswer := p.pc.LocalDescription()
@@ -134,11 +140,11 @@ func (p *Peer) selectVideoCodec(offerSDP string, streamCodec string) string {
 
 	// H.265/HEVC 지원 여부 확인
 	supportsH265 := strings.Contains(offerUpper, "H265") ||
-					strings.Contains(offerUpper, "HEVC")
+		strings.Contains(offerUpper, "HEVC")
 
 	// H.264/AVC 지원 여부 확인
 	supportsH264 := strings.Contains(offerUpper, "H264") ||
-					strings.Contains(offerUpper, "AVC")
+		strings.Contains(offerUpper, "AVC")
 
 	// 스트림 코덱이 지정된 경우, 클라이언트가 지원하는지 확인
 	if streamCodec != "" {
@@ -173,64 +179,6 @@ func (p *Peer) selectVideoCodec(offerSDP string, streamCodec string) string {
 
 // createPeerConnection은 PeerConnection을 생성합니다
 func (p *Peer) createPeerConnection(selectedCodec string) error {
-	// MediaEngine 설정
-	m := &webrtc.MediaEngine{}
-
-	// H.264 비디오 코덱 등록
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:     webrtc.MimeTypeH264,
-			ClockRate:    90000,
-			Channels:     0,
-			SDPFmtpLine:  "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
-		},
-		PayloadType: 96,
-	}, webrtc.RTPCodecTypeVideo); err != nil {
-		return fmt.Errorf("failed to register H264 codec: %w", err)
-	}
-
-	// H.265 비디오 코덱 등록
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:    webrtc.MimeTypeH265,
-			ClockRate:   90000,
-			Channels:    0,
-			SDPFmtpLine: "level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST",
-		},
-		PayloadType: 49,
-	}, webrtc.RTPCodecTypeVideo); err != nil {
-		return fmt.Errorf("failed to register H265 codec: %w", err)
-	}
-
-	// Opus 오디오 코덱 등록
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:    webrtc.MimeTypeOpus,
-			ClockRate:   48000,
-			Channels:    2,
-			SDPFmtpLine: "minptime=10;useinbandfec=1",
-		},
-		PayloadType: 111,
-	}, webrtc.RTPCodecTypeAudio); err != nil {
-		return fmt.Errorf("failed to register Opus codec: %w", err)
-	}
-
-	// Interceptor 설정
-	i := &interceptor.Registry{}
-	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
-		return fmt.Errorf("failed to register interceptors: %w", err)
-	}
-
-	// SettingEngine 설정
-	s := webrtc.SettingEngine{}
-
-	// API 생성
-	api := webrtc.NewAPI(
-		webrtc.WithMediaEngine(m),
-		webrtc.WithInterceptorRegistry(i),
-		webrtc.WithSettingEngine(s),
-	)
-
 	// PeerConnection 설정
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -243,8 +191,9 @@ func (p *Peer) createPeerConnection(selectedCodec string) error {
 		},
 	}
 
-	// PeerConnection 생성
-	pc, err := api.NewPeerConnection(config)
+	// 공유 API를 사용하여 PeerConnection 생성 (싱글톤 패턴)
+	// MediaEngine, Interceptor, SettingEngine은 Manager에서 이미 설정됨
+	pc, err := p.sharedAPI.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("failed to create peer connection: %w", err)
 	}

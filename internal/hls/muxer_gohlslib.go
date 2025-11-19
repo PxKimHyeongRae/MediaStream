@@ -117,16 +117,23 @@ func (m *MuxerGoHLS) Start() error {
 	)
 
 	// gohlslib Muxer 생성
+	segmentDuration := time.Duration(m.config.SegmentDuration) * time.Second
 	m.muxer = &gohlslib.Muxer{
 		Variant:            gohlslib.MuxerVariantMPEGTS, // 표준 TS 세그먼트
 		SegmentCount:       m.config.SegmentCount,
-		SegmentMinDuration: time.Duration(m.config.SegmentDuration) * time.Second,
+		SegmentMinDuration: segmentDuration,
 		Directory:          m.outputDir,
 		OnEncodeError: func(err error) {
-			m.logger.Error("HLS encode error",
-				zap.String("stream_id", m.streamID),
-				zap.Error(err),
-			)
+			// "segment duration changed" 경고는 무시 (iOS 호환성 경고이지만 실제로는 문제없음)
+			if err != nil && err.Error() != "" {
+				errStr := err.Error()
+				if !(len(errStr) > 20 && errStr[:20] == "segment duration cha") {
+					m.logger.Warn("HLS encode warning",
+						zap.String("stream_id", m.streamID),
+						zap.Error(err),
+					)
+				}
+			}
 		},
 	}
 
