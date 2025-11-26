@@ -1,10 +1,10 @@
-// WebSocket 연결
+﻿// WebSocket connection
 let ws = null;
 let pc = null; // RTCPeerConnection
 let currentStreamId = null;
 let statsInterval = null;
 
-// DOM 요소
+// DOM elements
 const statusDiv = document.getElementById('status');
 const connectionIndicator = document.getElementById('connectionIndicator');
 const logDiv = document.getElementById('log');
@@ -14,7 +14,7 @@ const streamSelect = document.getElementById('streamSelect');
 const streamStats = document.getElementById('streamStats');
 const autoPlayCheckbox = document.getElementById('autoPlay');
 
-// 로그 함수
+// Log function
 function log(message, type = 'info') {
     const timestamp = new Date().toLocaleTimeString();
     const entry = document.createElement('div');
@@ -25,7 +25,7 @@ function log(message, type = 'info') {
     console.log(`[${type.toUpperCase()}]`, message);
 }
 
-// 상태 업데이트
+// Status update
 function updateStatus(message, type = 'info') {
     statusDiv.innerHTML = `<span id="connectionIndicator" class="connection-indicator ${getIndicatorClass(type)}"></span>${message}`;
     statusDiv.className = `status ${type}`;
@@ -39,107 +39,107 @@ function getIndicatorClass(type) {
     }
 }
 
-// WebSocket 연결
+// WebSocket connection
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/signaling`;
 
-    log(`WebSocket 연결 시도: ${wsUrl}`);
-    updateStatus('WebSocket 연결 중...', 'info');
+    log(`WebSocket connecting: ${wsUrl}`);
+    updateStatus('WebSocket connecting...', 'info');
 
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-        updateStatus('WebSocket 연결됨', 'success');
-        log('WebSocket 연결 성공', 'success');
+        updateStatus('WebSocket connected', 'success');
+        log('WebSocket connected', 'success');
     };
 
     ws.onmessage = async (event) => {
         try {
             const msg = JSON.parse(event.data);
-            log(`수신: ${msg.type}`, 'info');
+            log(`Received: ${msg.type}`, 'info');
 
             switch (msg.type) {
                 case 'welcome':
-                    log(`서버: ${msg.message}`, 'success');
+                    log(`Server: ${msg.message}`, 'success');
                     break;
 
                 case 'answer':
                     if (pc && msg.sdp) {
-                        // RTCPeerConnection이 have-local-offer 상태일 때만 answer 설정 가능
+                        // Can only set answer when RTCPeerConnection is in have-local-offer state
                         if (pc.signalingState === 'have-local-offer') {
-                            log('SDP Answer 수신, 설정 중...', 'info');
+                            log('SDP Answer received, setting...', 'info');
                             await pc.setRemoteDescription(new RTCSessionDescription({
                                 type: 'answer',
                                 sdp: msg.sdp
                             }));
-                            log('SDP Answer 설정 완료', 'success');
+                            log('SDP Answer set', 'success');
                         } else {
-                            log(`SDP Answer 무시 (상태: ${pc.signalingState})`, 'warning');
+                            log(`SDP Answer ignored (state: ${pc.signalingState})`, 'warning');
                         }
                     }
                     break;
 
                 case 'candidate_ack':
-                    log('ICE Candidate 확인됨', 'info');
+                    log('ICE Candidate acknowledged', 'info');
                     break;
 
                 case 'error':
-                    updateStatus(`에러: ${msg.message}`, 'error');
+                    updateStatus(`Error: ${msg.message}`, 'error');
                     break;
 
                 default:
-                    log(`알 수 없는 메시지: ${msg.type}`, 'warning');
+                    log(`Unknown message: ${msg.type}`, 'warning');
             }
         } catch (e) {
-            log(`메시지 처리 에러: ${e.message}`, 'error');
+            log(`Message processing error: ${e.message}`, 'error');
         }
     };
 
     ws.onerror = (error) => {
-        updateStatus('WebSocket 에러', 'error');
-        log(`WebSocket 에러`, 'error');
+        updateStatus('WebSocket error', 'error');
+        log(`WebSocket error`, 'error');
     };
 
     ws.onclose = () => {
-        updateStatus('WebSocket 연결 끊김', 'warning');
-        log('WebSocket 연결 종료', 'warning');
-        // 3초 후 재연결 시도
+        updateStatus('WebSocket disconnected', 'warning');
+        log('WebSocket closed', 'warning');
+        // Reconnect after 3 seconds
         setTimeout(connectWebSocket, 3000);
     };
 }
 
-// WebSocket 메시지 전송
+// Send WebSocket message
 function sendMessage(msg) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
-        log(`전송: ${msg.type}`, 'info');
+        log(`Sent: ${msg.type}`, 'info');
     } else {
-        log('WebSocket이 연결되지 않았습니다', 'error');
+        log('WebSocket not connected', 'error');
     }
 }
 
-// 스트림 목록 새로고침
+// Refresh stream list
 async function refreshStreams() {
     try {
         const response = await fetch('/api/v1/streams');
         const data = await response.json();
 
-        log(`활성 스트림: ${data.totalStreams}개`, 'info');
+        log(`Active streams: ${data.totalStreams}`, 'info');
 
-        // select 옵션 업데이트
+        // Update select options
         const currentValue = streamSelect.value;
-        streamSelect.innerHTML = '<option value="">-- 스트림 선택 --</option>';
+        streamSelect.innerHTML = '<option value="">-- Select Stream --</option>';
 
         if (data.rtspClients && data.rtspClients.length > 0) {
             data.rtspClients.forEach(streamId => {
                 const option = document.createElement('option');
                 option.value = streamId;
-                option.textContent = `${streamId} (RTSP 연결됨)`;
+                option.textContent = `${streamId} (RTSP connected)`;
                 streamSelect.appendChild(option);
             });
 
-            // 이전 선택값 복원 또는 첫 번째 스트림 자동 선택
+            // Restore previous selection or auto-select first stream
             if (currentValue && data.rtspClients.includes(currentValue)) {
                 streamSelect.value = currentValue;
             } else if (data.rtspClients.length > 0 && !currentStreamId) {
@@ -148,37 +148,37 @@ async function refreshStreams() {
             }
         }
 
-        // 스트림 목록만 있고 RTSP 클라이언트가 없는 경우
+        // Streams without RTSP clients
         if (data.streams && data.streams.length > 0) {
             data.streams.forEach(streamId => {
                 if (!data.rtspClients || !data.rtspClients.includes(streamId)) {
                     const option = document.createElement('option');
                     option.value = streamId;
-                    option.textContent = `${streamId} (대기 중)`;
+                    option.textContent = `${streamId} (waiting)`;
                     streamSelect.appendChild(option);
                 }
             });
         }
 
     } catch (e) {
-        log(`스트림 목록 조회 에러: ${e.message}`, 'error');
+        log(`Stream list error: ${e.message}`, 'error');
     }
 }
 
-// 스트림 선택 시
+// On stream select
 function onStreamSelect() {
     const streamId = streamSelect.value;
 
     if (streamId) {
         currentStreamId = streamId;
         document.getElementById('streamId').value = streamId;
-        log(`스트림 선택: ${streamId}`, 'info');
+        log(`Stream selected: ${streamId}`, 'info');
 
-        // 통계 표시
+        // Show stats
         streamStats.classList.add('visible');
         updateStreamStats(streamId);
 
-        // 자동 재생
+        // Auto play
         if (autoPlayCheckbox.checked) {
             playSelectedStream();
         }
@@ -192,11 +192,11 @@ function onStreamSelect() {
     }
 }
 
-// 선택된 스트림 재생
+// Play selected stream
 function playSelectedStream() {
     const streamId = streamSelect.value;
     if (!streamId) {
-        updateStatus('스트림을 선택하세요', 'warning');
+        updateStatus('Please select a stream', 'warning');
         return;
     }
 
@@ -204,7 +204,7 @@ function playSelectedStream() {
     startWebRTC();
 }
 
-// 스트림 통계 업데이트
+// Update stream stats
 async function updateStreamStats(streamId) {
     try {
         const response = await fetch(`/api/v1/streams/${streamId}`);
@@ -222,22 +222,22 @@ async function updateStreamStats(streamId) {
             data.subscriberCount;
 
     } catch (e) {
-        // 무시
+        // Ignore
     }
 }
 
-// RTSP 스트림 시작
+// Start RTSP stream
 async function startRTSP() {
     const streamId = document.getElementById('streamId').value.trim();
     const rtspUrl = document.getElementById('rtspUrl').value.trim();
 
     if (!streamId || !rtspUrl) {
-        updateStatus('스트림 ID와 RTSP URL을 입력하세요', 'warning');
+        updateStatus('Please enter Stream ID and RTSP URL', 'warning');
         return;
     }
 
     try {
-        log(`RTSP 스트림 시작: ${streamId}`, 'info');
+        log(`Starting RTSP stream: ${streamId}`, 'info');
 
         const response = await fetch(`/api/v1/streams/${streamId}/start`, {
             method: 'POST',
@@ -248,32 +248,32 @@ async function startRTSP() {
         const result = await response.json();
 
         if (response.ok) {
-            updateStatus(`RTSP 스트림 시작됨: ${streamId}`, 'success');
+            updateStatus(`RTSP stream started: ${streamId}`, 'success');
             currentStreamId = streamId;
             await refreshStreams();
 
-            // select에서 해당 스트림 선택
+            // Select the stream
             streamSelect.value = streamId;
             onStreamSelect();
         } else {
-            updateStatus(`RTSP 시작 실패: ${result.message}`, 'error');
+            updateStatus(`RTSP start failed: ${result.message}`, 'error');
         }
     } catch (e) {
-        updateStatus(`RTSP 시작 에러: ${e.message}`, 'error');
+        updateStatus(`RTSP start error: ${e.message}`, 'error');
     }
 }
 
-// RTSP 스트림 중지
+// Stop RTSP stream
 async function stopRTSP() {
     const streamId = document.getElementById('streamId').value.trim() || currentStreamId;
 
     if (!streamId) {
-        updateStatus('스트림 ID를 입력하세요', 'warning');
+        updateStatus('Please enter Stream ID', 'warning');
         return;
     }
 
     try {
-        log(`RTSP 스트림 중지: ${streamId}`, 'info');
+        log(`Stopping RTSP stream: ${streamId}`, 'info');
 
         const response = await fetch(`/api/v1/streams/${streamId}/stop`, {
             method: 'POST'
@@ -282,44 +282,44 @@ async function stopRTSP() {
         const result = await response.json();
 
         if (response.ok) {
-            updateStatus(`RTSP 스트림 중지됨: ${streamId}`, 'success');
+            updateStatus(`RTSP stream stopped: ${streamId}`, 'success');
             await refreshStreams();
         } else {
-            updateStatus(`RTSP 중지 실패: ${result.message}`, 'error');
+            updateStatus(`RTSP stop failed: ${result.message}`, 'error');
         }
     } catch (e) {
-        updateStatus(`RTSP 중지 에러: ${e.message}`, 'error');
+        updateStatus(`RTSP stop error: ${e.message}`, 'error');
     }
 }
 
-// 연결 중 상태 플래그
+// Connection in progress flag
 let isConnecting = false;
 
-// WebRTC 연결 시작
+// Start WebRTC connection
 async function startWebRTC() {
     if (!currentStreamId) {
-        updateStatus('먼저 스트림을 선택하세요', 'warning');
+        updateStatus('Please select a stream first', 'warning');
         return;
     }
 
-    // 이미 연결 중이면 무시 (중복 offer 방지)
+    // Ignore if already connecting (prevent duplicate offers)
     if (isConnecting) {
-        log('이미 연결 중입니다. 중복 요청 무시.', 'warning');
+        log('Already connecting. Ignoring duplicate request.', 'warning');
         return;
     }
 
     if (pc) {
-        log('기존 WebRTC 연결 종료 중...', 'info');
+        log('Closing existing WebRTC connection...', 'info');
         stopWebRTC();
     }
 
     isConnecting = true;
 
     try {
-        log(`WebRTC 연결 시작: ${currentStreamId}`, 'info');
-        updateStatus('WebRTC 연결 중...', 'info');
+        log(`Starting WebRTC connection: ${currentStreamId}`, 'info');
+        updateStatus('WebRTC connecting...', 'info');
 
-        // RTCPeerConnection 생성
+        // Create RTCPeerConnection
         pc = new RTCPeerConnection({
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -327,10 +327,10 @@ async function startWebRTC() {
             ]
         });
 
-        // ICE Candidate 처리
+        // ICE Candidate handling
         pc.onicecandidate = (event) => {
             if (event.candidate) {
-                log(`ICE Candidate 생성`, 'info');
+                log(`ICE Candidate generated`, 'info');
                 sendMessage({
                     type: 'candidate',
                     streamId: currentStreamId,
@@ -339,36 +339,36 @@ async function startWebRTC() {
             }
         };
 
-        // 트랙 수신
+        // Track received
         pc.ontrack = (event) => {
-            log(`비디오 트랙 수신됨`, 'success');
+            log(`Video track received`, 'success');
             video.srcObject = event.streams[0];
             videoPlaceholder.style.display = 'none';
             video.style.display = 'block';
-            updateStatus(`재생 중: ${currentStreamId}`, 'success');
+            updateStatus(`Playing: ${currentStreamId}`, 'success');
         };
 
-        // 연결 상태 모니터링
+        // Connection state monitoring
         pc.onconnectionstatechange = () => {
-            log(`WebRTC 상태: ${pc.connectionState}`, 'info');
+            log(`WebRTC state: ${pc.connectionState}`, 'info');
             if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
                 isConnecting = false;
-                updateStatus('WebRTC 연결 실패', 'error');
+                updateStatus('WebRTC connection failed', 'error');
             } else if (pc.connectionState === 'connected') {
                 isConnecting = false;
-                updateStatus(`연결됨: ${currentStreamId}`, 'success');
+                updateStatus(`Connected: ${currentStreamId}`, 'success');
             }
         };
 
-        // Transceiver 추가 (recvonly)
+        // Add Transceiver (recvonly)
         pc.addTransceiver('video', { direction: 'recvonly' });
 
-        // SDP Offer 생성
-        log('SDP Offer 생성 중...', 'info');
+        // Create SDP Offer
+        log('Creating SDP Offer...', 'info');
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        log('SDP Offer 전송 중...', 'info');
+        log('Sending SDP Offer...', 'info');
         sendMessage({
             type: 'offer',
             streamId: currentStreamId,
@@ -377,35 +377,35 @@ async function startWebRTC() {
 
     } catch (e) {
         isConnecting = false;
-        updateStatus(`WebRTC 에러: ${e.message}`, 'error');
-        log(`WebRTC 에러: ${e.stack}`, 'error');
+        updateStatus(`WebRTC error: ${e.message}`, 'error');
+        log(`WebRTC error: ${e.stack}`, 'error');
     }
 }
 
-// WebRTC 연결 종료
+// Stop WebRTC connection
 function stopWebRTC() {
     isConnecting = false;
 
     if (pc) {
         pc.close();
         pc = null;
-        log('WebRTC 연결 종료', 'info');
+        log('WebRTC connection closed', 'info');
     }
 
     video.srcObject = null;
     video.style.display = 'none';
     videoPlaceholder.style.display = 'flex';
 
-    updateStatus('재생 중지됨', 'warning');
+    updateStatus('Playback stopped', 'warning');
 }
 
-// 페이지 로드 시 초기화
+// Initialize on page load
 window.addEventListener('load', () => {
-    log('Media Server Client 시작', 'success');
+    log('Media Server Client started', 'success');
     connectWebSocket();
     refreshStreams();
 
-    // 3초마다 스트림 목록 및 통계 자동 갱신
+    // Auto refresh stream list and stats every 3 seconds
     setInterval(() => {
         refreshStreams();
         if (currentStreamId) {
@@ -414,7 +414,7 @@ window.addEventListener('load', () => {
     }, 3000);
 });
 
-// 페이지 언로드 시 정리
+// Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     stopWebRTC();
     if (ws) {

@@ -104,13 +104,12 @@ class SignalingController(
             subscribers.remove(sessionId)
         }
 
-        // WebRTC 피어 정리
+        // 세션의 모든 WebRTC 피어 정리
         runBlocking {
             try {
-                webrtcManager.removePeer(sessionId)
+                webrtcManager.removePeersBySession(sessionId)
             } catch (e: Exception) {
-                // Peer가 없는 경우 무시 (offer 전에 연결이 끊긴 경우)
-                logger.debug { "[$sessionId] No peer to remove" }
+                logger.debug { "[$sessionId] Error removing peers: ${e.message}" }
             }
         }
 
@@ -179,8 +178,8 @@ class SignalingController(
         logger.debug { "[$sessionId] Received ICE candidate for stream: $streamId" }
 
         try {
-            // WebRTC Peer 조회 및 ICE candidate 추가
-            val peer = webrtcManager.getPeer(sessionId)
+            // WebRTC Peer 조회 및 ICE candidate 추가 (sessionId + streamId)
+            val peer = webrtcManager.getPeer(sessionId, streamId)
             if (peer != null) {
                 peer.addIceCandidate(candidate)
 
@@ -192,7 +191,7 @@ class SignalingController(
                 )
                 sendMessage(session, ackMsg)
             } else {
-                logger.warn { "[$sessionId] Peer not found for ICE candidate" }
+                logger.warn { "[$sessionId] Peer not found for ICE candidate (stream: $streamId)" }
                 sendError(session, "Peer not found")
             }
         } catch (e: Exception) {

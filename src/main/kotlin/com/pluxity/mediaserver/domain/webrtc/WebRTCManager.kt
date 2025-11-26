@@ -36,27 +36,35 @@ class WebRTCManager(
     private val rtspManager: RTSPManager,
     private val streamsConfig: StreamsConfig
 ) {
+    // 키: sessionId:streamId (복합 키) - 하나의 세션에서 여러 스트림 시청 지원
     private val peers = ConcurrentHashMap<String, WebRTCPeer>()
+
+    /**
+     * 복합 피어 키 생성.
+     */
+    private fun peerKey(sessionId: String, streamId: String): String = "$sessionId:$streamId"
 
     /**
      * WebRTC 피어 생성.
      *
      * On-demand 스트림인 경우 RTSP 클라이언트를 자동으로 시작합니다.
      *
-     * @param peerId 피어 식별자 (보통 WebSocket session ID)
+     * @param sessionId 세션 식별자 (WebSocket session ID)
      * @param streamId 스트림 식별자
      * @return WebRTCPeer
      * @throws ResourceLimitException 최대 피어 수 초과 시
      */
-    fun createPeer(peerId: String, streamId: String): WebRTCPeer {
-        // 기존 피어가 있으면 먼저 정리
-        val existingPeer = peers.remove(peerId)
+    fun createPeer(sessionId: String, streamId: String): WebRTCPeer {
+        val key = peerKey(sessionId, streamId)
+
+        // 같은 세션+스트림 조합의 기존 피어가 있으면 정리
+        val existingPeer = peers.remove(key)
         if (existingPeer != null) {
-            logger.warn { "Closing existing peer before creating new one: $peerId" }
+            logger.warn { "Closing existing peer before creating new one: $key" }
             try {
                 runBlocking { existingPeer.close() }
             } catch (e: Exception) {
-                logger.error(e) { "Error closing existing peer: $peerId" }
+                logger.error(e) { "Error closing existing peer: $key" }
             }
         }
 
@@ -69,15 +77,15 @@ class WebRTCManager(
             )
         }
 
-        logger.info { "Creating WebRTC peer: $peerId for stream: $streamId" }
+        logger.info { "Creating WebRTC peer: $key" }
 
         // On-demand 스트림인 경우 RTSP 자동 시작
         ensureRtspClientRunning(streamId)
 
-        val peer = WebRTCPeer(peerId, streamId, streamManager, config)
-        peers[peerId] = peer
+        val peer = WebRTCPeer(key, streamId, streamManager, config)
+        peers[key] = peer
 
-        logger.info { "WebRTC peer created: $peerId (total: ${peers.size})" }
+        logger.info { "WebRTC peer created: $key (total: ${peers.size})" }
         return peer
     }
 
@@ -114,29 +122,58 @@ class WebRTCManager(
     }
 
     /**
-     * WebRTC 피어 조회.
+     * WebRTC 피어 조회 (복합 키).
      *
-     * @param peerId 피어 식별자
+     * @param sessionId 세션 식별자
+     * @param streamId 스트림 식별자
      * @return WebRTCPeer (없으면 null)
      */
-    fun getPeer(peerId: String): WebRTCPeer? {
-        return peers[peerId]
+    fun getPeer(sessionId: String, streamId: String): WebRTCPeer? {
+        val key = peerKey(sessionId, streamId)
+        return peers[key]
     }
 
     /**
-     * WebRTC 피어 삭제.
+     * WebRTC 피어 삭제 (복합 키).
      *
-     * @param peerId 피어 식별자
+     * @param sessionId 세션 식별자
+     * @param streamId 스트림 식별자
      * @throws NotFoundException 피어가 존재하지 않을 경우
      */
-    suspend fun removePeer(peerId: String) {
-        val peer = peers.remove(peerId)
-            ?: throw NotFoundException("WebRTC peer", peerId)
+    suspend fun removePeer(sessionId: String, streamId: String) {
+        val key = peerKey(sessionId, streamId)
+        val peer = peers.remove(key)
+            ?: throw NotFoundException("WebRTC peer", key)
 
-        logger.info { "Removing WebRTC peer: $peerId" }
+        logger.info { "Removing WebRTC peer: $key" }
         peer.close()
 
-        logger.info { "WebRTC peer removed: $peerId (total: ${peers.size})" }
+        logger.info { "WebRTC peer removed: $key (total: ${peers.size})" }
+    }
+
+    /**
+     * 세션의 모든 피어 삭제.
+     *
+     * @param sessionId 세션 식별자
+     */
+    suspend fun removePeersBySession(sessionId: String) {
+        val peersToRemove = peers.entries
+            .filter { it.key.startsWith("$sessionId:") }
+            .toList()
+
+        peersToRemove.forEach { (key, peer) ->
+            try {
+                peers.remove(key)
+                peer.close()
+                logger.info { "Removed peer for disconnected session: $key" }
+            } catch (e: Exception) {
+                logger.error(e) { "Error removing peer: $key" }
+            }
+        }
+
+        if (peersToRemove.isNotEmpty()) {
+            logger.info { "Removed ${peersToRemove.size} peers for session: $sessionId" }
+        }
     }
 
     /**

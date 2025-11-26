@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Media Server - Stream Viewer</title>
+    <title>Media Server Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -12,369 +12,716 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0f1419;
+            color: #ffffff;
             padding: 20px;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1800px;
             margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        header {
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 2em;
-        }
-
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 0.9em;
-        }
-
-        .section {
-            margin-bottom: 30px;
-        }
-
-        .section-title {
-            font-size: 1.3em;
-            color: #444;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
-        }
-
-        .input-group {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-
-        input[type="text"], select {
-            flex: 1;
-            min-width: 200px;
-            padding: 12px;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            font-size: 1em;
-            transition: border-color 0.3s;
-        }
-
-        select {
-            background: white;
-            cursor: pointer;
-        }
-
-        input[type="text"]:focus, select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        button {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            font-size: 1em;
+            font-size: 28px;
             font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
         }
 
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-            background: #5568d3;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn-success {
-            background: #22c55e;
-            color: white;
-        }
-
-        .btn-success:hover:not(:disabled) {
-            background: #16a34a;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
-        }
-
-        .btn-danger {
-            background: #ef4444;
-            color: white;
-        }
-
-        .btn-danger:hover:not(:disabled) {
-            background: #dc2626;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
-        }
-
-        .btn-secondary {
-            background: #6b7280;
-            color: white;
-        }
-
-        .btn-secondary:hover:not(:disabled) {
-            background: #4b5563;
-        }
-
-        .video-container {
-            background: #000;
-            border-radius: 8px;
-            overflow: hidden;
-            margin-bottom: 15px;
-            position: relative;
-            aspect-ratio: 16/9;
-        }
-
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            display: none;
-        }
-
-        .status {
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-            font-weight: 500;
-        }
-
-        .status.info {
-            background: #dbeafe;
-            color: #1e40af;
-            border-left: 4px solid #3b82f6;
-        }
-
-        .status.success {
-            background: #dcfce7;
-            color: #166534;
-            border-left: 4px solid #22c55e;
-        }
-
-        .status.error {
-            background: #fee2e2;
-            color: #991b1b;
-            border-left: 4px solid #ef4444;
-        }
-
-        .status.warning {
-            background: #fef3c7;
-            color: #92400e;
-            border-left: 4px solid #f59e0b;
-        }
-
-        .log-container {
-            background: #1e293b;
-            color: #e2e8f0;
-            padding: 15px;
-            border-radius: 6px;
-            max-height: 250px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 0.85em;
-        }
-
-        .log-entry {
-            margin-bottom: 5px;
-            padding: 3px 0;
-        }
-
-        .log-entry .timestamp {
-            color: #94a3b8;
-        }
-
-        .log-entry.info { color: #60a5fa; }
-        .log-entry.success { color: #34d399; }
-        .log-entry.error { color: #f87171; }
-        .log-entry.warning { color: #fbbf24; }
-
-        .placeholder {
+        .nav-links {
             display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: #64748b;
-            font-size: 1.2em;
-        }
-
-        .stream-select-group {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .stream-select-group label {
-            font-weight: 600;
-            color: #444;
-        }
-
-        .stream-stats {
-            background: #f8fafc;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 15px;
-            display: none;
-        }
-
-        .stream-stats.visible {
-            display: block;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 15px;
         }
 
-        .stat-item {
-            text-align: center;
+        .nav-links a {
+            color: #1d9bf0;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: background 0.2s;
         }
 
-        .stat-value {
-            font-size: 1.5em;
-            font-weight: 700;
-            color: #667eea;
+        .nav-links a:hover {
+            background: rgba(29, 155, 240, 0.1);
         }
 
-        .stat-label {
-            font-size: 0.85em;
-            color: #666;
+        .controls {
+            background: #192734;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
         }
 
-        .auto-play-toggle {
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            background: #1d9bf0;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #1a8cd8;
+        }
+
+        button:disabled {
+            background: #38444d;
+            cursor: not-allowed;
+        }
+
+        button.disconnect {
+            background: #f4212e;
+        }
+
+        button.disconnect:hover {
+            background: #d9182b;
+        }
+
+        .summary {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .summary-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .summary-label {
+            font-size: 12px;
+            color: #657786;
+        }
+
+        .summary-value {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .camera-card {
+            background: #192734;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .camera-header {
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #0f1419;
+        }
+
+        .camera-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .camera-status {
             display: flex;
             align-items: center;
             gap: 8px;
+            font-size: 12px;
         }
 
-        .auto-play-toggle input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-
-        .connection-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
+        .status-dot {
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            margin-right: 8px;
+            background: #657786;
         }
 
-        .connection-indicator.connected { background: #22c55e; }
-        .connection-indicator.connecting { background: #f59e0b; animation: pulse 1s infinite; }
-        .connection-indicator.disconnected { background: #ef4444; }
+        .status-dot.connected {
+            background: #17bf63;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connecting {
+            background: #ffad1f;
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.error {
+            background: #f4212e;
+        }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
+
+        .camera-video-container {
+            background: #000000;
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16/9;
+        }
+
+        .camera-video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .camera-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.7);
+            color: #657786;
+            font-size: 12px;
+        }
+
+        .camera-overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #192734;
+            border-top-color: #1d9bf0;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .camera-info {
+            padding: 12px 15px;
+            background: #0f1419;
+        }
+
+        .info-items {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-label {
+            color: #657786;
+            margin-bottom: 2px;
+            font-size: 10px;
+        }
+
+        .info-value {
+            color: #ffffff;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .camera-controls {
+            padding: 10px 15px;
+            display: flex;
+            gap: 8px;
+            background: #0f1419;
+        }
+
+        .camera-controls button {
+            font-size: 12px;
+            padding: 6px 12px;
+        }
+
+        .no-streams {
+            text-align: center;
+            padding: 60px 20px;
+            color: #657786;
+            grid-column: 1 / -1;
+        }
+
+        .no-streams h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        /* Add RTSP Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #192734;
+            border-radius: 12px;
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 20px;
+        }
+
+        .modal-content input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #38444d;
+            border-radius: 6px;
+            background: #0f1419;
+            color: #ffffff;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .modal-content input:focus {
+            outline: none;
+            border-color: #1d9bf0;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .modal-buttons button.cancel {
+            background: #38444d;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎥 Media Server - Stream Viewer</h1>
-        <p class="subtitle">RTSP to WebRTC 실시간 스트리밍 (Kotlin + Spring Boot + Virtual Threads)</p>
+        <header>
+            <h1>Media Server Dashboard</h1>
+            <div class="nav-links">
+                <a href="webrtc-viewer.html">Single Viewer</a>
+            </div>
+        </header>
 
-        <!-- 상태 표시 -->
-        <div id="status" class="status info">
-            <span id="connectionIndicator" class="connection-indicator disconnected"></span>
-            준비 중... WebSocket 연결을 시작합니다.
-        </div>
-
-        <!-- 스트림 선택 및 재생 -->
-        <div class="section">
-            <h2 class="section-title">📺 스트림 선택 및 재생</h2>
-            <div class="stream-select-group">
-                <label for="streamSelect">스트림:</label>
-                <select id="streamSelect" onchange="onStreamSelect()">
-                    <option value="">-- 스트림 선택 --</option>
-                </select>
-                <button class="btn-success" onclick="playSelectedStream()" id="btnPlay">▶️ 재생</button>
-                <button class="btn-danger" onclick="stopWebRTC()" id="btnStop">⏹️ 중지</button>
-                <div class="auto-play-toggle">
-                    <input type="checkbox" id="autoPlay" checked>
-                    <label for="autoPlay">자동 재생</label>
-                </div>
+        <div class="controls">
+            <div class="control-buttons">
+                <button id="connectAllBtn">Connect All</button>
+                <button id="disconnectAllBtn" class="disconnect">Disconnect All</button>
+                <button id="refreshBtn">Refresh</button>
+                <button id="addStreamBtn">+ Add RTSP</button>
             </div>
 
-            <!-- 스트림 통계 -->
-            <div id="streamStats" class="stream-stats">
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-value" id="statPackets">0</div>
-                        <div class="stat-label">패킷 수신</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="statBitrate">0 Mbps</div>
-                        <div class="stat-label">비트레이트</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="statUptime">0s</div>
-                        <div class="stat-label">업타임</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="statSubscribers">0</div>
-                        <div class="stat-label">구독자</div>
-                    </div>
+            <div class="summary">
+                <div class="summary-item">
+                    <span class="summary-label">Total Streams</span>
+                    <span class="summary-value" id="totalStreams">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">WebRTC Connected</span>
+                    <span class="summary-value" id="webrtcConnected">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Total Bitrate</span>
+                    <span class="summary-value" id="totalBitrate">0 kbps</span>
                 </div>
             </div>
         </div>
 
-        <!-- 비디오 플레이어 -->
-        <div class="section">
-            <h2 class="section-title">🖥️ 비디오</h2>
-            <div class="video-container">
-                <video id="video" autoplay playsinline muted></video>
-                <div id="videoPlaceholder" class="placeholder">
-                    스트림을 선택하면 자동으로 재생됩니다
-                </div>
+        <div id="gridContainer" class="grid-container">
+            <div class="no-streams">
+                <h2>Loading...</h2>
+                <p>Fetching stream list</p>
             </div>
         </div>
-
-        <!-- RTSP 수동 시작 (접힌 상태) -->
-        <details class="section">
-            <summary class="section-title" style="cursor: pointer;">⚙️ RTSP 수동 관리 (고급)</summary>
-            <div style="padding-top: 15px;">
-                <div class="input-group">
-                    <input type="text" id="streamId" placeholder="스트림 ID" value="">
-                    <input type="text" id="rtspUrl" placeholder="RTSP URL" value="">
-                </div>
-                <div class="input-group">
-                    <button class="btn-primary" onclick="startRTSP()">▶️ RTSP 시작</button>
-                    <button class="btn-danger" onclick="stopRTSP()">⏹️ RTSP 중지</button>
-                    <button class="btn-secondary" onclick="refreshStreams()">🔄 새로고침</button>
-                </div>
-            </div>
-        </details>
-
-        <!-- 로그 -->
-        <details class="section" open>
-            <summary class="section-title" style="cursor: pointer;">📋 로그</summary>
-            <div id="log" class="log-container" style="margin-top: 15px;"></div>
-        </details>
     </div>
 
-    <script src="app.js"></script>
+    <!-- Add RTSP Modal -->
+    <div id="addStreamModal" class="modal">
+        <div class="modal-content">
+            <h2>Add RTSP Stream</h2>
+            <input type="text" id="newStreamId" placeholder="Stream ID (e.g., camera_01)">
+            <input type="text" id="newRtspUrl" placeholder="RTSP URL (e.g., rtsp://192.168.1.100/stream)">
+            <div class="modal-buttons">
+                <button class="cancel" onclick="closeModal()">Cancel</button>
+                <button onclick="addRtspStream()">Add Stream</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/websocket-manager.js"></script>
+    <script src="js/webrtc-engine.js"></script>
+    <script>
+        let streams = [];
+        let webrtcEngines = {};
+        let totalBitrate = 0;
+
+        // DOM elements
+        const gridContainer = document.getElementById('gridContainer');
+        const connectAllBtn = document.getElementById('connectAllBtn');
+        const disconnectAllBtn = document.getElementById('disconnectAllBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const addStreamBtn = document.getElementById('addStreamBtn');
+        const totalStreamsEl = document.getElementById('totalStreams');
+        const webrtcConnectedEl = document.getElementById('webrtcConnected');
+        const totalBitrateEl = document.getElementById('totalBitrate');
+
+        // Initialize
+        async function init() {
+            await loadStreams();
+            setupEventListeners();
+
+            // Auto-connect all cameras after 1 second
+            if (streams.length > 0) {
+                console.log('Auto-connecting all cameras...');
+                setTimeout(() => {
+                    connectAll();
+                }, 1000);
+            }
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            connectAllBtn.addEventListener('click', connectAll);
+            disconnectAllBtn.addEventListener('click', disconnectAll);
+            refreshBtn.addEventListener('click', refresh);
+            addStreamBtn.addEventListener('click', () => {
+                document.getElementById('addStreamModal').classList.add('active');
+            });
+        }
+
+        // Load stream list from Kotlin backend
+        async function loadStreams() {
+            try {
+                const response = await fetch('/api/v1/streams');
+                const data = await response.json();
+
+                // Get streams from streams array (all available streams)
+                streams = (data.streams || []).map(name => ({ name: name }));
+
+                totalStreamsEl.textContent = streams.length;
+
+                if (streams.length === 0) {
+                    gridContainer.innerHTML = `
+                        <div class="no-streams">
+                            <h2>No streams available</h2>
+                            <p>Click "+ Add RTSP" to add a new stream</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                renderCameras();
+                console.log('Loaded streams:', streams);
+
+            } catch (error) {
+                console.error('Failed to load streams:', error);
+                gridContainer.innerHTML = `
+                    <div class="no-streams">
+                        <h2>Failed to load streams</h2>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Render cameras
+        function renderCameras() {
+            gridContainer.innerHTML = '';
+
+            streams.forEach(stream => {
+                const card = createCameraCard(stream);
+                gridContainer.appendChild(card);
+            });
+        }
+
+        // Create camera card
+        function createCameraCard(stream) {
+            const card = document.createElement('div');
+            card.className = 'camera-card';
+            card.id = `camera-${stream.name}`;
+
+            card.innerHTML = `
+                <div class="camera-header">
+                    <div class="camera-title">${stream.name}</div>
+                    <div class="camera-status">
+                        <div class="status-dot" id="status-${stream.name}"></div>
+                        <span id="status-text-${stream.name}">Waiting</span>
+                    </div>
+                </div>
+
+                <div class="camera-video-container">
+                    <video class="camera-video" id="video-${stream.name}" muted autoplay playsinline></video>
+                    <div class="camera-overlay" id="overlay-${stream.name}">
+                        <div class="spinner"></div>
+                        <div>Preparing WebRTC...</div>
+                    </div>
+                </div>
+
+                <div class="camera-info">
+                    <div class="info-items">
+                        <div class="info-item">
+                            <div class="info-label">Bitrate</div>
+                            <div class="info-value" id="bitrate-${stream.name}">0 kbps</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Packets</div>
+                            <div class="info-value" id="packets-${stream.name}">0</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Status</div>
+                            <div class="info-value" id="conn-status-${stream.name}">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="camera-controls">
+                    <button onclick="connectCamera('${stream.name}')">Connect</button>
+                    <button class="disconnect" onclick="disconnectCamera('${stream.name}')">Disconnect</button>
+                    <button onclick="stopRtspStream('${stream.name}')">Stop RTSP</button>
+                </div>
+            `;
+
+            return card;
+        }
+
+        // Connect all cameras (parallel)
+        async function connectAll() {
+            console.log('Connecting all cameras in parallel...');
+
+            const connectPromises = streams.map(stream =>
+                connectCamera(stream.name).catch(err => {
+                    console.error(`Failed to connect ${stream.name}:`, err);
+                })
+            );
+
+            await Promise.all(connectPromises);
+            console.log('All cameras connection initiated');
+        }
+
+        // Disconnect all
+        function disconnectAll() {
+            console.log('Disconnecting all cameras...');
+            Object.keys(webrtcEngines).forEach(streamId => {
+                disconnectCamera(streamId);
+            });
+        }
+
+        // Refresh
+        async function refresh() {
+            disconnectAll();
+            await loadStreams();
+        }
+
+        // Connect individual camera
+        async function connectCamera(streamId) {
+            try {
+                // Already connected
+                if (webrtcEngines[streamId] && webrtcEngines[streamId].isConnected()) {
+                    console.log(`WebRTC ${streamId} already connected`);
+                    return;
+                }
+
+                const videoElement = document.getElementById(`video-${streamId}`);
+                const engine = new WebRTCEngine({
+                    streamId: streamId,
+                    videoElement: videoElement,
+                    autoReconnect: true
+                });
+
+                engine.on('connected', () => {
+                    console.log(`WebRTC ${streamId} connected`);
+                    updateCameraStatus(streamId, 'connected', 'Connected');
+                    document.getElementById(`overlay-${streamId}`).classList.add('hidden');
+                    document.getElementById(`conn-status-${streamId}`).textContent = 'Connected';
+                    updateSummary();
+                });
+
+                engine.on('disconnected', () => {
+                    console.log(`WebRTC ${streamId} disconnected`);
+                    document.getElementById(`overlay-${streamId}`).classList.remove('hidden');
+                    document.getElementById(`conn-status-${streamId}`).textContent = 'Disconnected';
+                    updateSummary();
+                });
+
+                engine.on('error', (error) => {
+                    console.error(`WebRTC ${streamId} error:`, error);
+                    updateCameraStatus(streamId, 'error', 'Error');
+                    document.getElementById(`conn-status-${streamId}`).textContent = 'Error';
+                });
+
+                engine.on('statechange', (state) => {
+                    if (state === 'connecting') {
+                        updateCameraStatus(streamId, 'connecting', 'Connecting...');
+                        document.getElementById(`conn-status-${streamId}`).textContent = 'Connecting';
+                    }
+                });
+
+                engine.on('stats', (stats) => {
+                    document.getElementById(`bitrate-${streamId}`).textContent = stats.bitrate.toFixed(1) + ' kbps';
+                    document.getElementById(`packets-${streamId}`).textContent = stats.packetsReceived.toLocaleString();
+                    updateTotalBitrate();
+                });
+
+                webrtcEngines[streamId] = engine;
+                await engine.connect();
+
+            } catch (error) {
+                console.error(`Failed to connect WebRTC ${streamId}:`, error);
+                document.getElementById(`overlay-${streamId}`).innerHTML = '<div>WebRTC connection failed</div>';
+            }
+        }
+
+        // Disconnect individual camera
+        function disconnectCamera(streamId) {
+            const webrtcEngine = webrtcEngines[streamId];
+            if (webrtcEngine) {
+                webrtcEngine.disconnect();
+                delete webrtcEngines[streamId];
+                document.getElementById(`overlay-${streamId}`).classList.remove('hidden');
+                document.getElementById(`overlay-${streamId}`).innerHTML = '<div class="spinner"></div><div>Preparing WebRTC...</div>';
+            }
+
+            updateCameraStatus(streamId, 'disconnected', 'Waiting');
+            document.getElementById(`conn-status-${streamId}`).textContent = '-';
+            updateSummary();
+        }
+
+        // Update camera status
+        function updateCameraStatus(streamId, status, text) {
+            const dot = document.getElementById(`status-${streamId}`);
+            const textEl = document.getElementById(`status-text-${streamId}`);
+
+            if (dot) dot.className = 'status-dot ' + status;
+            if (textEl) textEl.textContent = text;
+        }
+
+        // Update summary
+        function updateSummary() {
+            const webrtcConnected = Object.values(webrtcEngines).filter(e => e.isConnected()).length;
+            webrtcConnectedEl.textContent = webrtcConnected;
+        }
+
+        // Update total bitrate
+        function updateTotalBitrate() {
+            let total = 0;
+            Object.values(webrtcEngines).forEach(engine => {
+                if (engine.isConnected()) {
+                    total += engine.getStats().bitrate;
+                }
+            });
+            totalBitrateEl.textContent = total.toFixed(1) + ' kbps';
+        }
+
+        // Modal functions
+        function closeModal() {
+            document.getElementById('addStreamModal').classList.remove('active');
+            document.getElementById('newStreamId').value = '';
+            document.getElementById('newRtspUrl').value = '';
+        }
+
+        // Add RTSP stream
+        async function addRtspStream() {
+            const streamId = document.getElementById('newStreamId').value.trim();
+            const rtspUrl = document.getElementById('newRtspUrl').value.trim();
+
+            if (!streamId || !rtspUrl) {
+                alert('Please enter both Stream ID and RTSP URL');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/streams/${streamId}/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: rtspUrl })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    closeModal();
+                    await refresh();
+                } else {
+                    alert(`Failed to add stream: ${result.message}`);
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Stop RTSP stream
+        async function stopRtspStream(streamId) {
+            if (!confirm(`Stop RTSP stream "${streamId}"?`)) return;
+
+            try {
+                // Disconnect WebRTC first
+                disconnectCamera(streamId);
+
+                const response = await fetch(`/api/v1/streams/${streamId}/stop`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    await refresh();
+                } else {
+                    alert(`Failed to stop stream: ${result.message}`);
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Close modal on backdrop click
+        document.getElementById('addStreamModal').addEventListener('click', (e) => {
+            if (e.target.id === 'addStreamModal') {
+                closeModal();
+            }
+        });
+
+        // Initialize
+        init();
+    </script>
 </body>
 </html>
