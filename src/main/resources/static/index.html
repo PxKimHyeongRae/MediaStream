@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Server - Stream Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            color: #444;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        input[type="text"], select {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        select {
+            background: white;
+            cursor: pointer;
+        }
+
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: #22c55e;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #16a34a;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #dc2626;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #4b5563;
+        }
+
+        .video-container {
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            position: relative;
+            aspect-ratio: 16/9;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: none;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+
+        .status.info {
+            background: #dbeafe;
+            color: #1e40af;
+            border-left: 4px solid #3b82f6;
+        }
+
+        .status.success {
+            background: #dcfce7;
+            color: #166534;
+            border-left: 4px solid #22c55e;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
+
+        .status.warning {
+            background: #fef3c7;
+            color: #92400e;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .log-container {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 250px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px 0;
+        }
+
+        .log-entry .timestamp {
+            color: #94a3b8;
+        }
+
+        .log-entry.info { color: #60a5fa; }
+        .log-entry.success { color: #34d399; }
+        .log-entry.error { color: #f87171; }
+        .log-entry.warning { color: #fbbf24; }
+
+        .placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #64748b;
+            font-size: 1.2em;
+        }
+
+        .stream-select-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .stream-select-group label {
+            font-weight: 600;
+            color: #444;
+        }
+
+        .stream-stats {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .stream-stats.visible {
+            display: block;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .auto-play-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .auto-play-toggle input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .connection-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .connection-indicator.connected { background: #22c55e; }
+        .connection-indicator.connecting { background: #f59e0b; animation: pulse 1s infinite; }
+        .connection-indicator.disconnected { background: #ef4444; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 Media Server - Stream Viewer</h1>
+        <p class="subtitle">RTSP to WebRTC 실시간 스트리밍 (Kotlin + Spring Boot + Virtual Threads)</p>
+
+        <!-- 상태 표시 -->
+        <div id="status" class="status info">
+            <span id="connectionIndicator" class="connection-indicator disconnected"></span>
+            준비 중... WebSocket 연결을 시작합니다.
+        </div>
+
+        <!-- 스트림 선택 및 재생 -->
+        <div class="section">
+            <h2 class="section-title">📺 스트림 선택 및 재생</h2>
+            <div class="stream-select-group">
+                <label for="streamSelect">스트림:</label>
+                <select id="streamSelect" onchange="onStreamSelect()">
+                    <option value="">-- 스트림 선택 --</option>
+                </select>
+                <button class="btn-success" onclick="playSelectedStream()" id="btnPlay">▶️ 재생</button>
+                <button class="btn-danger" onclick="stopWebRTC()" id="btnStop">⏹️ 중지</button>
+                <div class="auto-play-toggle">
+                    <input type="checkbox" id="autoPlay" checked>
+                    <label for="autoPlay">자동 재생</label>
+                </div>
+            </div>
+
+            <!-- 스트림 통계 -->
+            <div id="streamStats" class="stream-stats">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="statPackets">0</div>
+                        <div class="stat-label">패킷 수신</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statBitrate">0 Mbps</div>
+                        <div class="stat-label">비트레이트</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statUptime">0s</div>
+                        <div class="stat-label">업타임</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statSubscribers">0</div>
+                        <div class="stat-label">구독자</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 비디오 플레이어 -->
+        <div class="section">
+            <h2 class="section-title">🖥️ 비디오</h2>
+            <div class="video-container">
+                <video id="video" autoplay playsinline muted></video>
+                <div id="videoPlaceholder" class="placeholder">
+                    스트림을 선택하면 자동으로 재생됩니다
+                </div>
+            </div>
+        </div>
+
+        <!-- RTSP 수동 시작 (접힌 상태) -->
+        <details class="section">
+            <summary class="section-title" style="cursor: pointer;">⚙️ RTSP 수동 관리 (고급)</summary>
+            <div style="padding-top: 15px;">
+                <div class="input-group">
+                    <input type="text" id="streamId" placeholder="스트림 ID" value="">
+                    <input type="text" id="rtspUrl" placeholder="RTSP URL" value="">
+                </div>
+                <div class="input-group">
+                    <button class="btn-primary" onclick="startRTSP()">▶️ RTSP 시작</button>
+                    <button class="btn-danger" onclick="stopRTSP()">⏹️ RTSP 중지</button>
+                    <button class="btn-secondary" onclick="refreshStreams()">🔄 새로고침</button>
+                </div>
+            </div>
+        </details>
+
+        <!-- 로그 -->
+        <details class="section" open>
+            <summary class="section-title" style="cursor: pointer;">📋 로그</summary>
+            <div id="log" class="log-container" style="margin-top: 15px;"></div>
+        </details>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

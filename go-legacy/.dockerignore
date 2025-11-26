@@ -1,0 +1,67 @@
+# Git
+.git
+../.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+test/
+*_test.go
+*.test
+coverage.*
+
+# Logs
+logs/
+*.log
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.md
+
+# Docker
+go-legacy/docker/
+!go-legacy/docker/entrypoint.sh
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Go specific
+vendor/
+
+# Environment files (use volumes instead)
+.env
+.env.example
+!.env.example
+
+# Skills (documentation)
+.claude/
+
+# Stress test results
+stress_*.log

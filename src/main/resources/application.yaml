@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: media-server
+  threads:
+    virtual:
+      enabled: true  # Enable Virtual Threads for all blocking operations
+
+server:
+  port: 8080
+  compression:
+    enabled: true
+  tomcat:
+    threads:
+      max: 200  # Virtual threads are lightweight, can handle more
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.pluxity.mediaserver: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/media-server.log
+    max-size: 500MB
+    max-history: 15
+    total-size-cap: 10GB
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Media Server Configuration
+media-server:
+  rtsp:
+    transport: tcp
+    buffer-size: 1024000
+    max-delay: 500000
+    reconnect-delay: 5000
+    max-reconnect-attempts: 3
+    read-timeout: 10000
+
+  webrtc:
+    ice-servers:
+      - urls:
+          - "stun:stun.l.google.com:19302"
+          - "stun:stun1.l.google.com:19302"
+    settings:
+      max-peers: 1000
+
+  hls:
+    enabled: true
+    output-dir: hls
+    segment-duration: 6
+    playlist-length: 5
+
+  performance:
+    max-streams: 100
+
+# Stream paths (mediaMTX style)
+media-streams:
+  paths:
+    CCTV-TEST1:
+      source: rtsp://admin:live0416@192.168.10.53:554/Streaming/Channels/101
+      sourceOnDemand: true
+      rtspTransport: tcp
+    CCTV-TEST2:
+      source: rtsp://admin:live0416@192.168.10.54:554/Streaming/Channels/101
+      sourceOnDemand: true
+      rtspTransport: tcp
+    CCTV-TEST3:
+      source: rtsp://admin:live0416@192.168.10.55:554/Streaming/Channels/101
+      sourceOnDemand: true
+      rtspTransport: tcp

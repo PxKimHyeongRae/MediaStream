@@ -1,3 +1,15 @@
+# ========================================
+# Gradle (Kotlin/Java)
+# ========================================
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# ========================================
+# Go (Legacy)
+# ========================================
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -21,69 +33,106 @@ vendor/
 # Go workspace file
 go.work
 
-# IDE - VSCode
+# ========================================
+# IDE
+# ========================================
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+# Eclipse
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# VSCode
 .vscode/
 *.code-workspace
 
-# IDE - IntelliJ IDEA
-.idea/
-*.iml
-*.iws
-
-# IDE - GoLand
-.idea/
-*.iml
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# Logs
-logs/
-*.log
-
+# ========================================
 # OS
+# ========================================
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-*.tar.gz
-*.zip
-
-# Config overrides
+# ========================================
+# Environment & Config
+# ========================================
+.env
+.env.local
+.env.*.local
 configs/config.local.yaml
 configs/*.local.yaml
 
+# ========================================
+# Logs
+# ========================================
+logs/
+*.log
+go-legacy/log/
+
+# ========================================
 # Temporary files
+# ========================================
 tmp/
 temp/
 *.tmp
 *.swp
 *.swo
 *~
+nul
 
+# ========================================
+# Build artifacts
+# ========================================
+*.tar
+*.tar.gz
+*.zip
+
+# ========================================
+# Media files
+# ========================================
+*.mp4
+*.avi
+*.mkv
+*.ts
+*.m3u8
+hls/
+/mediamtx-main/
+media-server.tar
+
+# ========================================
+# Database
+# ========================================
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# ========================================
 # Node modules (for web frontend)
+# ========================================
 node_modules/
 npm-debug.log
 yarn-error.log
 
-# Media files (for testing)
-*.mp4
-*.avi
-*.mkv
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
+# ========================================
 # Docker
-.dockerignore
-
-# Air (hot reload tool)
-tmp/
-/mediamtx-main/
-media-server.tar
-docker/deploy.ps1
-/hls/
+# ========================================
+go-legacy/docker/deploy.ps1

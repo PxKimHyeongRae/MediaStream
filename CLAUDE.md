@@ -15,120 +15,175 @@
 ## 📋 프로젝트 개요
 
 ### 프로젝트 이름
-**RTSP to WebRTC Media Server (cctv3)**
+**Media Server - Kotlin Migration**
 
 ### 목적 및 목표
-RTSP 프로토콜의 IP 카메라 스트림을 웹 브라우저에서 시청 가능하도록 WebRTC로 변환하는 고성능 미디어 서버 구축
+기존 Go 기반 RTSP to WebRTC 미디어 서버를 **Kotlin + Spring Boot + Virtual Threads** 기반으로 마이그레이션합니다.
 
 **핵심 목표**:
+- ✅ Go와 동등한 성능 (OpenJDK 21 + ZGC)
+- ✅ 향상된 개발 생산성 (Kotlin DSL, 타입 안전성)
+- ✅ 풍부한 생태계 (Java/Kotlin 라이브러리)
+- ✅ 프로덕션 레벨 안정성
 - RTSP → WebRTC 실시간 변환 및 스트리밍
 - H.265/H.264 코덱 자동 감지 및 선택
 - 낮은 지연시간 (< 1초)
 - 확장 가능한 아키텍처 (다중 스트림, 다중 클라이언트)
-- mediaMTX와 유사한 성능 및 기능
+
+### 마이그레이션 전략
+**3단계 점진적 최적화 전략** (MIGRATION_STRATEGY.md 참조):
+1. **Phase 1**: Spring Boot + Tomcat (안정성 우선, 80% 성공 확률)
+2. **Phase 2**: Selective Netty (병목 부분만 최적화, 15% 필요)
+3. **Phase 3**: Full Ktor (최후의 수단, 5% 필요)
+
+**현재 전략**: Phase 1 - Spring Boot + Tomcat + Virtual Threads
 
 ### 주요 이해관계자
-- 개발자: CCTV/IP 카메라 웹 스트리밍이 필요한 프로젝트
-- 최종 사용자: 웹 브라우저에서 실시간 카메라 영상을 시청하는 사용자
+- 개발팀: Go를 모르지만 Kotlin은 학습 가능한 팀
+- 운영팀: 안정성과 유지보수성 중시
+- 최종 사용자: 웹 브라우저에서 실시간 카메라 영상 시청
 
 ---
 
 ## 🏗️ 아키텍처 설계
 
-### 시스템 구조
+### 시스템 구조 (Kotlin 버전)
 ```
 [RTSP Camera (H.265/H.264)]
     ↓ TCP/RTSP
-[RTSP Client (gortsplib v4)]
-    ↓ RTP Packets (OnPacketRTPAny)
-[Stream Manager (Pub/Sub)]
-    ↓ Subscribe
-[WebRTC Peer (pion v4)]
+[RTSP Client (JavaCV + Virtual Threads)]
+    ↓ RTP Packets
+[StreamManager (Kotlin Flow)]
+    ↓ collect/emit
+[WebRTC Peer (Coroutines)]
     ├─ H.265 지원 → H.265 트랙
     └─ H.264만 지원 → H.264 트랙
     ↓ WebRTC/SRTP
 [Web Browser] ✅ 실시간 영상 재생
 ```
 
+### 레이어 아키텍처
+
+```
+┌─────────────────────────────────────────┐
+│         Presentation Layer              │
+│  - REST API (@RestController)           │
+│  - WebSocket (Spring WebSocket)         │
+│  - Static Files (ResourceHandler)       │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
+│         Application Layer               │
+│  - StreamService                        │
+│  - RTSPService (Virtual Threads)        │
+│  - WebRTCService (Coroutines)           │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
+│         Domain Layer                    │
+│  - StreamManager (Flow)                 │
+│  - RTSPClient (Virtual Threads)         │
+│  - WebRTCPeer (Coroutines)              │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
+│         Infrastructure Layer            │
+│  - JavaCV 1.5.9 (FFmpeg 래퍼)           │
+│  - Netty ByteBuf (Off-heap)             │
+│  - WebRTC Library (TBD)                 │
+└─────────────────────────────────────────┘
+```
+
 ### 주요 컴포넌트
 
-1. **RTSP Client** (`internal/rtsp/client.go`)
-   - gortsplib v4 기반 RTSP 클라이언트
-   - OnPacketRTPAny() 콜백을 통한 자동 RTP 패킷 수신
-   - TCP 연결, 자동 재연결 지원
+#### 1. Common Infrastructure (완료 ✅)
+**위치**: `src/main/kotlin/com/pluxity/mediaserver/common/`
 
-2. **Stream Manager** (`internal/core/stream_manager.go`)
-   - Pub/Sub 패턴 구현
-   - 다중 구독자 지원 (1:N 스트림 분배)
-   - RTP 패킷 버퍼링 및 전달
+- **LoggingExtensions.kt**: 구조화 로깅 유틸리티
+  - `errorWithContext()`, `infoWithContext()`, `measureTime()`
+  - `logStreamEvent()`, `logPeerEvent()`, `logRTPPacket()`
 
-3. **WebRTC Peer** (`internal/webrtc/peer.go`)
-   - pion/webrtc v4 기반
-   - 동적 코덱 선택 (Offer SDP 파싱)
-   - ICE 연결 관리 (GatheringCompletePromise)
-   - 구독자 정리 로직
+- **Exceptions.kt**: 예외 계층 구조
+  - `MediaServerException` (sealed class)
+  - `StreamException`, `RTSPException`, `WebRTCException`
+  - `CodecException`, `ConfigurationException`, `ResourceLimitException`
+  - `TimeoutException`, `RTPPacketException`
 
-4. **WebRTC Manager** (`internal/webrtc/manager.go`)
-   - 피어 생성 및 관리
-   - 피어 종료 시 자동 정리 (OnPeerClosed 콜백)
+- **MetricsCollector.kt**: Micrometer 기반 메트릭
+  - 활성 스트림/피어 Gauge
+  - RTP 패킷 송수신 Counter/DistributionSummary
+  - 에러 카운팅, 작업 시간 측정
 
-5. **Signaling Server** (`internal/signaling/server.go`)
-   - WebSocket 기반 시그널링
-   - Offer/Answer SDP 교환
-   - ICE candidate 교환
+- **ByteBufExtensions.kt**: Netty ByteBuf 유틸리티
+  - `withDirectBuffer()` - 자동 release
+  - `writeRTPHeader()`, `readRTPHeader()`
+  - `RTPHeader` data class
+  - Off-heap 메모리 관리 헬퍼
 
-6. **API Server** (`internal/api/server.go`)
-   - Gin 프레임워크 기반 HTTP 서버
-   - 정적 파일 서빙 (웹 UI)
-   - WebSocket 엔드포인트, 헬스 체크 API
+#### 2. Configuration
+**위치**: `src/main/kotlin/com/pluxity/mediaserver/config/`
 
-7. **Web Client** (`web/static/`)
-   - HTML5 기반 웹 UI
-   - WebRTC API 통합
-   - 실시간 통계 표시
+- **MediaServerProperties.kt**: 설정 클래스
+  - RTSP, WebRTC, HLS, Performance 설정
+  - `@ConfigurationProperties` 바인딩
 
-8. **CCTV Manager** (`internal/cctv/manager.go`)
-   - AIOT API 연동을 통한 동적 CCTV 관리
-   - 인증, 동기화, CCTV 목록 조회
-   - Stream 설정 자동 생성 (PathConfig)
+#### 3. Controllers (기본만 완료)
+**위치**: `src/main/kotlin/com/pluxity/mediaserver/controller/`
 
-9. **Logger** (`pkg/logger/logger.go`)
-   - zap 기반 구조화 로깅
-   - lumberjack을 통한 로그 로테이션
-   - 파일 크기/날짜 기반 자동 백업 및 압축
+- **HealthController.kt**: 헬스 체크
+- **VirtualThreadTestController.kt**: Virtual Threads 검증용
+
+#### 4. Domain (미구현)
+**위치**: `src/main/kotlin/com/pluxity/mediaserver/domain/`
+
+- **StreamManager** (예정): Kotlin Flow 기반 Pub/Sub
+- **RTPPacket** (예정): RTP 패킷 데이터 클래스
+- **Codec** (예정): 코덱 정보
+
+#### 5. Service (미구현)
+**위치**: `src/main/kotlin/com/pluxity/mediaserver/service/`
+
+- **RTSPService** (예정): JavaCV + Virtual Threads
+- **WebRTCService** (예정): Coroutines 기반
+- **StreamService** (예정): 스트림 생명주기 관리
 
 ### 기술 스택
 
 **언어/프레임워크**:
-- Go 1.23+ (고성능, 뛰어난 동시성)
-- HTML5/JavaScript (웹 클라이언트)
+- **Kotlin 1.9.21**: 주 언어
+- **Spring Boot 3.2.0**: 웹 프레임워크 (내장 Tomcat)
+- **Java 21**: Virtual Threads, ZGC 지원
+- **Kotlin Coroutines 1.8.0**: 비동기 처리
 
-**주요 라이브러리**:
-- [pion/webrtc v4](https://github.com/pion/webrtc) - Pure Go WebRTC 구현
-- [bluenviron/gortsplib v4](https://github.com/bluenviron/gortsplib) - RTSP 클라이언트/서버
-- [pion/rtp](https://github.com/pion/rtp) - RTP 패킷 처리
-- [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP 프레임워크
-- [gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket
-- [uber-go/zap](https://github.com/uber-go/zap) - 구조화 로깅
-- [lumberjack.v2](https://github.com/natefinch/lumberjack) - 로그 로테이션
+**미디어 처리**:
+- **JavaCV 1.5.9**: FFmpeg 래퍼 (RTSP 클라이언트)
+- **Netty 4.1.104**: ByteBuf (Off-heap 메모리)
 
-**인프라**:
-- YAML 기반 설정 파일
-- 단일 바이너리 배포
+**모니터링**:
+- **Micrometer + Prometheus**: 메트릭 수집
+- **Spring Actuator**: 헬스 체크
+- **kotlin-logging 5.1.0**: 구조화 로깅
+
+**빌드/런타임**:
+- **Gradle 8.5** (Kotlin DSL)
+- **OpenJDK 21** + ZGC (Generational)
 
 ### 디자인 패턴 및 원칙
 
-1. **Pub/Sub 패턴**: 스트림 관리자가 RTP 패킷을 여러 구독자에게 분배
-2. **의존성 주입**: 각 컴포넌트에 Logger, Config 주입
-3. **콜백 패턴**: 피어 종료 시 자동 정리 (OnClose, OnPeerClosed)
-4. **동시성 제어**: sync.RWMutex를 통한 안전한 동시 접근
-5. **컨텍스트 관리**: context.Context를 통한 생명주기 관리
+1. **Kotlin Flow**: RTP 패킷 스트리밍 (Go 채널 → Kotlin Flow)
+2. **Virtual Threads**: Blocking I/O 처리 (RTSP 연결)
+3. **Coroutines**: 비동기 작업 (WebRTC 피어 관리)
+4. **의존성 주입**: Spring @Component, @Service, @Autowired
+5. **Sealed Classes**: 예외 계층, 상태 타입 안전성
+6. **Extension Functions**: 코드 재사용 및 가독성
+7. **Data Classes**: 불변 데이터 모델
 
 **코딩 컨벤션**:
-- Go 표준 스타일 가이드 준수
-- 구조화 로깅 (zap)
-- 에러 처리: fmt.Errorf with %w
-- 리소스 정리: defer 활용
+- Kotlin 공식 스타일 가이드 준수
+- 클래스명: PascalCase, 함수명: camelCase, 상수: UPPER_SNAKE_CASE
+- 구조화 로깅 (kotlin-logging)
+- 예외 처리: sealed class MediaServerException
+- 리소스 정리: use {} 블록 (AutoCloseable)
 
 ---
 
@@ -136,651 +191,368 @@ RTSP 프로토콜의 IP 카메라 스트림을 웹 브라우저에서 시청 가
 
 ### 완료된 작업
 
-#### Phase 1: 프로젝트 초기 설정 ✅
-- ✅ Go 프로젝트 초기화 (go.mod, 디렉토리 구조)
-- ✅ 기본 아키텍처 설계
-- ✅ 설정 시스템 구축 (YAML)
-- ✅ 로깅 시스템 구축 (zap)
+#### Phase 1 Week 1: 프로젝트 초기화 ✅ (2025-11-24)
+- ✅ Go 파일 go-legacy/ 디렉토리로 이동
+- ✅ Kotlin + Spring Boot 프로젝트 구조 생성
+- ✅ build.gradle.kts 설정
+  - Java 21, Kotlin 1.9.21, Spring Boot 3.2.0
+  - JavaCV, Netty, Coroutines 의존성
+  - ZGC JVM 옵션 (runWithZGC 태스크)
+- ✅ application.yaml 기본 설정
+  - **Virtual Threads 활성화**: `spring.threads.virtual.enabled: true`
+  - Tomcat 설정, Actuator, 로깅
+- ✅ MediaServerApplication.kt
+  - ZGC 감지 및 로깅
+  - JVM 정보 출력
+- ✅ HealthController.kt (기본 헬스 체크)
+- ✅ Gradle wrapper 생성
 
-#### Phase 2: RTSP 클라이언트 구현 ✅
-- ✅ gortsplib v4 통합
-- ✅ RTSP 스트림 연결 및 미디어 수신
-- ✅ **RTP 패킷 콜백 구현 (OnPacketRTPAny)** ⭐
-- ✅ H.265/H.264 코덱 지원
-- ✅ 스트림 관리자 (Pub/Sub 패턴)
+#### Phase 1 Week 2: 공통 인프라 구현 ✅ (2025-11-24)
+- ✅ **LoggingExtensions.kt**: 구조화 로깅 유틸리티
+  - `errorWithContext()`, `infoWithContext()`, `measureTime()`
+  - 스트림/피어/RTP 전용 로깅 함수
+- ✅ **Exceptions.kt**: 예외 계층 구조 (10개 예외 클래스)
+- ✅ **MetricsCollector.kt**: Micrometer 메트릭 수집기
+  - Gauge (활성 스트림/피어), Counter (패킷/에러)
+  - DistributionSummary (바이트), Timer (작업 시간)
+- ✅ **ByteBufExtensions.kt**: Netty ByteBuf 유틸리티
+  - `withDirectBuffer()`, RTP 헤더 읽기/쓰기
+  - Off-heap 메모리 안전 관리
+- ✅ **단위 테스트 작성**: ByteBufExtensionsTest, ExceptionsTest
+- ✅ **테스트 통과**: 모든 common 모듈 테스트 PASSED
 
-#### Phase 3: WebRTC 서버 구현 ✅
-- ✅ pion/webrtc v4 통합
-- ✅ WebRTC 피어 연결 관리
-- ✅ **동적 코덱 선택 (Offer SDP 파싱)** ⭐ (가장 중요한 개선!)
-- ✅ H.265/H.264 자동 협상
-- ✅ **ICE 연결 처리 (GatheringCompletePromise)** ⭐
-- ✅ 비디오/오디오 트랙 생성 및 관리
+#### Java 21 + Virtual Threads 검증 ✅ (2025-11-24)
+- ✅ Java 21.0.8 설치 확인 (`C:\Program Files\Java\jdk-21`)
+- ✅ Virtual Threads 활성화 설정
+- ✅ **VirtualThreadTestController.kt** 작성 및 테스트
+  - `GET /api/v1/test/thread-info`: Virtual Thread 확인
+  - `GET /api/v1/test/blocking-test`: Blocking 작업 테스트
+- ✅ **검증 결과**: `isVirtual: true`, `threadClass: VirtualThread`
+- ✅ Spring Boot + 내장 Tomcat + Virtual Threads 정상 작동
 
-#### Phase 4: 시그널링 서버 ✅
-- ✅ WebSocket 기반 시그널링
-- ✅ Offer/Answer SDP 교환
-- ✅ ICE candidate 교환
-- ✅ 다중 클라이언트 연결 관리
+#### Phase 2 Week 3-4: Stream Domain 구현 ✅ (2025-11-24)
+- ✅ **RTPPacket.kt**: RTP 패킷 데이터 모델
+  - Netty ByteBuf 기반 메모리 관리
+  - `fromByteArray()`, `fromByteBuf()`, `create()` 팩토리 메서드
+  - `copy()`, `release()` 메모리 안전성
+  - **테스트**: 11개 테스트 모두 통과 ✅
+- ✅ **StreamFlow.kt**: Kotlin Flow 기반 Pub/Sub
+  - `MutableSharedFlow` (1:N 브로드캐스트)
+  - `subscribe()`, `publish()` 메서드
+  - BufferOverflow.DROP_OLDEST 전략
+  - 통계 수집 (패킷 발행/전달, 비트레이트)
+- ✅ **StreamManager.kt**: 스트림 생명주기 관리
+  - `ConcurrentHashMap` 기반 thread-safe 관리
+  - CRUD 작업 (생성, 조회, 삭제)
+  - 스트림별 구독자 관리
+- ✅ **Netty ByteBuf 분석**: Tomcat 환경에서 사용 문제 없음 확인
+  - Off-heap 메모리 관리로 GC 압력 최소화
+  - Virtual Threads와 호환
 
-#### Phase 5: 웹 클라이언트 ✅
-- ✅ HTML5 기반 UI
-- ✅ WebRTC API 통합
-- ✅ 실시간 통계 표시 (비트레이트, 패킷 수 등)
-- ✅ 연결 상태 모니터링
-
-#### Phase 6: 테스트 및 검증 ✅
-- ✅ E2E 자동화 테스트 (Go WebRTC 클라이언트)
-- ✅ **구독자 정리 문제 해결** ⭐
-- ✅ 실제 IP 카메라 스트리밍 성공
-- ✅ 브라우저 호환성 검증 (Chrome, Edge, Firefox)
-
-#### Phase 7: mediaMTX 스타일 다중 카메라 시스템 ✅
-- ✅ **mediaMTX 스타일 paths 설정** ⭐
-- ✅ **재사용 가능한 WebRTCEngine.js 라이브러리** ⭐
-- ✅ 단일 스트림 뷰어 페이지 (viewer.html)
-- ✅ 다중 카메라 대시보드 (dashboard.html)
-- ✅ 온디맨드 스트림 관리 (sourceOnDemand)
-- ✅ 스트림 관리 REST API
-- ✅ 실제 4개 CCTV 카메라 통합
-- ✅ RTSP 인증 URL 인코딩 처리
-- ✅ 대시보드 자동 연결 기능
+**테스트 상태**:
+- RTPPacket: 11개 테스트 통과 ✅
+- StreamFlow/StreamManager: 구현 완료, 단위 테스트는 통합 테스트로 이동 예정
+  - 이슈: `runTest` TestDispatcher와 `Flow.collect` 무한 루프 간의 타이밍 문제
+  - 해결: Phase 2 Week 5-6에서 실제 환경 통합 테스트로 검증
 
 ### 진행 중인 작업
-- 없음 (Phase 7 완료)
+- E2E 통합 테스트 준비
+
+### 완료된 마일스톤 ✅
+
+#### Phase 3-4: WebRTC 완전 구현 (2025-11-25)
+- ✅ **Jitsi 라이브러리 직접 분석**: `javap`로 API 확인
+- ✅ **ICEAgent (ice4j 3.2-9)**: Pure Java ICE 구현
+- ✅ **SRTPTransformer (jitsi-srtp 1.1-21)**: Pure Java SRTP 암호화
+- ✅ **WebRTCPeer 통합**: ICE + SRTP + RTPRepacketizer
+- ✅ **Virtual Threads 완벽 호환**: JNI 없음!
+- ✅ **BUILD SUCCESSFUL**
+
+#### Phase 5: RTSP Client 구현 (완료 ✅)
+- ✅ JavaCV + FFmpegFrameGrabber 사용
+- ✅ Virtual Threads로 blocking I/O 처리
+- ✅ 자동 재연결 로직
+- ✅ H.264/H.265 코덱 자동 감지
+- ✅ StreamManager 통합
 
 ### 다음 계획
-1. **성능 최적화**: 지연시간 측정 및 튜닝, 버퍼 크기 조정
-2. **다중 클라이언트 부하 테스트**: 수십~수백 동시 접속 테스트
-3. **녹화 기능**: 스트림 녹화 및 재생
-4. **HTTPS/WSS 지원**: 프로덕션 환경 준비
-5. **인증/권한 관리**: JWT 기반 인증
-6. **PTZ 카메라 제어**: 팬/틸트/줌 제어 기능
+
+#### Phase 6: E2E 테스트 및 검증 (다음 단계)
+- [ ] 실제 RTSP 카메라 연결 테스트
+- [ ] 브라우저 WebRTC 연결 테스트
+- [ ] 성능 벤치마크 (처리량, 레이턴시)
+- [ ] 메모리 프로파일링 (ByteBuf 누수 체크)
+
+#### Phase 7: 프로덕션 강화 (예정)
+- [ ] TURN 서버 지원
+- [ ] 에러 복구 로직 강화
+- [ ] 모니터링 및 알림
 
 ---
 
 ## 📝 핵심 기능 구현 상세
 
-### 1. 동적 코덱 선택 (Dynamic Codec Selection)
+### 1. Virtual Threads 활성화 (Completed ✅)
 
-**목적**: 브라우저가 지원하는 코덱(H.265/H.264)을 자동으로 감지하여 최적의 코덱 선택
+**목적**: Spring Boot에서 모든 blocking 작업을 Virtual Threads로 처리
 
-**구현 위치**: `internal/webrtc/peer.go:127-151`
+**구현 위치**: `src/main/resources/application.yaml:4-6`
 
 **기술적 의사결정**:
-- **결정**: 클라이언트 Offer SDP를 파싱하여 지원 코덱 확인
+- **결정**: `spring.threads.virtual.enabled: true` 설정 추가
 - **이유**:
-  - Chrome/Edge는 H.265 지원, Firefox는 H.264만 지원
-  - 서버가 브라우저에 맞는 코덱을 선택해야 호환성 보장
-  - 카메라가 H.265로 전송하더라도 브라우저 지원에 따라 트랙 생성
+  - Java 21의 Virtual Threads (Project Loom) 활용
+  - Blocking I/O (RTSP 연결) 시 OS 스레드 점유 최소화
+  - Go의 goroutine과 유사한 경량 동시성
+  - Tomcat의 모든 요청 처리가 Virtual Thread로 실행
 - **대안**:
-  1. 서버에서 H.264로 트랜스코딩 (비용 높음, 지연 증가)
-  2. 클라이언트가 코덱 선택 (복잡도 증가)
-
-**핵심 코드**:
-```go
-func (p *Peer) selectVideoCodec(offerSDP string) string {
-    offerUpper := strings.ToUpper(offerSDP)
-
-    // H.265/HEVC 지원 여부 확인
-    if strings.Contains(offerUpper, "H265") || strings.Contains(offerUpper, "HEVC") {
-        return "H265"
-    }
-    // H.264/AVC 지원 여부 확인
-    if strings.Contains(offerUpper, "H264") || strings.Contains(offerUpper, "AVC") {
-        return "H264"
-    }
-
-    return "H265" // 기본값
-}
-```
-
-**테스트 결과**:
-- ✅ Chrome 107+: H.265 자동 선택
-- ✅ Edge 107+: H.265 자동 선택
-- ✅ Firefox: H.264 자동 선택
-
----
-
-### 2. RTP 패킷 수신 (RTP Packet Reception)
-
-**목적**: RTSP 스트림에서 RTP 패킷을 자동으로 수신하여 WebRTC로 전달
-
-**구현 위치**: `internal/rtsp/client.go:249-258`
-
-**기술적 의사결정**:
-- **결정**: gortsplib v4의 `OnPacketRTPAny()` 콜백 사용
-- **이유**:
-  - v4부터 OnPacketRTP가 deprecated됨
-  - OnPacketRTPAny는 모든 미디어 타입의 패킷을 자동으로 읽어줌
-  - 수동으로 ReadPacketRTPOrRTCP 호출 불필요
-- **이전 시도**:
-  1. OnPacketRTP 사용 → deprecated 경고
-  2. ReadPacketRTPOrRTCP 직접 호출 → 패킷 못 읽음
-  3. OnPacketRTPAny 사용 → ✅ 성공
-
-**핵심 코드**:
-```go
-// 각 미디어에 대해 패킷 콜백 등록
-medi.OnPacketRTPAny(func(medi *media.Media, forma format.Format, pkt *rtp.Packet) {
-    if c.onPacket != nil {
-        c.onPacket(pkt)
-    }
-})
-```
-
-**변경 이력**:
-- 2025-10-29: OnPacketRTPAny 사용으로 변경, 패킷 수신 성공
-
----
-
-### 3. ICE 연결 처리 (ICE Connection Handling)
-
-**목적**: WebRTC ICE 연결 실패 문제 해결
-
-**구현 위치**: `internal/webrtc/peer.go:107-122`
-
-**기술적 의사결정**:
-- **결정**: `GatheringCompletePromise`를 사용하여 ICE candidate 수집 완료 대기
-- **이유**:
-  - Answer SDP를 너무 빨리 보내면 ICE candidates가 포함되지 않음
-  - 클라이언트가 서버의 IP를 모르면 연결 실패
-  - 모든 candidates 수집 후 Answer 전송 필요
-- **이전 문제**:
-  - Answer SDP에 ICE candidates 없음
-  - 클라이언트: "ICE connection state: failed"
-
-**핵심 코드**:
-```go
-// ICE candidate 수집 완료 대기
-<-webrtc.GatheringCompletePromise(pc)
-
-// Answer 생성 (모든 ICE candidates 포함)
-answer, err := pc.CreateAnswer(nil)
-pc.SetLocalDescription(answer)
-```
-
-**변경 이력**:
-- 2025-10-29: GatheringCompletePromise 추가, ICE 연결 성공
-
----
-
-### 4. 구독자 정리 (Subscriber Cleanup)
-
-**목적**: 피어 연결 종료 시 스트림에서 자동으로 구독 해제
-
-**구현 위치**:
-- `internal/webrtc/manager.go:52-62` (OnPeerClosed 콜백)
-- `cmd/server/main.go:352-393` (cleanupPeer 메서드)
-
-**기술적 의사결정**:
-- **결정**: 피어 종료 시 콜백 체인을 통해 자동 정리
-- **이유**:
-  - 이전에는 피어가 종료되어도 스트림에 남아있어 에러 발생
-  - "Failed to send packet to subscriber" 에러 지속 발생
-  - 메모리 누수 가능성
-- **구현 방식**:
-  1. Peer.Close() → OnClose 콜백
-  2. Manager.OnPeerClosed → Application.cleanupPeer()
-  3. Stream.Unsubscribe(peerID)
-
-**핵심 코드**:
-```go
-// Manager에서 피어 생성 시
-peer := NewPeer(PeerConfig{
-    OnClose: func(peerID string) {
-        // 외부 콜백 호출
-        if m.onPeerClosed != nil {
-            m.onPeerClosed(peerID)
-        }
-        // 매니저에서 제거
-        m.RemovePeer(peerID)
-    },
-})
-
-// Application의 cleanupPeer
-func (app *Application) cleanupPeer(peerID string) {
-    streamID := app.peerStreams[peerID]
-    stream, _ := app.streamManager.GetStream(streamID)
-    stream.Unsubscribe(peerID)
-}
-```
-
-**변경 이력**:
-- 2025-10-29: 구독자 자동 정리 구현, 에러 완전 해결
-
----
-
-### 5. mediaMTX 스타일 Paths 설정 (mediaMTX-style Configuration)
-
-**목적**: mediaMTX와 동일한 방식의 직관적인 설정 시스템 구현
-
-**구현 위치**:
-- `configs/config.yaml:11-28` (설정 파일)
-- `internal/core/config.go:30-38` (PathConfig 구조체)
-- `cmd/server/main.go:182-218` (loadStreamsFromConfig)
-
-**기술적 의사결정**:
-- **결정**: YAML의 paths 섹션에서 각 스트림을 개별 설정
-- **이유**:
-  - mediaMTX 사용자들에게 친숙한 구조
-  - 스트림별 독립적인 설정 가능 (sourceOnDemand, rtspTransport)
-  - 설정 파일만으로 스트림 추가/제거 가능
-  - 코드 수정 없이 운영 가능
-- **대안**:
-  1. 데이터베이스 기반 설정 (복잡도 증가)
-  2. REST API로만 관리 (재시작 시 설정 손실)
+  1. Reactive Stack (WebFlux) - 복잡도 증가, 학습 곡선 높음
+  2. 일반 Platform Threads - 컨텍스트 스위칭 비용 높음
 
 **핵심 코드**:
 ```yaml
-# configs/config.yaml
-paths:
-  plx_cctv_01:
-    source: rtsp://admin:live0416@192.168.4.121:554/Streaming/Channels/101
-    sourceOnDemand: no  # 서버 시작 시 자동 연결
-    rtspTransport: tcp
-  plx_cctv_02:
-    source: rtsp://admin:1q2w3e4r%21@192.168.4.54:554/profile2/media.smp
-    sourceOnDemand: yes  # 클라이언트 요청 시 연결
-    rtspTransport: tcp
+spring:
+  threads:
+    virtual:
+      enabled: true  # Enable Virtual Threads for all blocking operations
+
+server:
+  tomcat:
+    threads:
+      max: 200  # Virtual threads are lightweight, can handle more
 ```
 
-```go
-// internal/core/config.go
-type PathConfig struct {
-    Source         string `yaml:"source"`
-    SourceOnDemand bool   `yaml:"sourceOnDemand"`
-    RTSPTransport  string `yaml:"rtspTransport"`
-}
-
-type Config struct {
-    Paths map[string]PathConfig `yaml:"paths"`
-    // ... other fields
+**검증 결과**:
+```json
+{
+  "threadName": "tomcat-handler-0",
+  "isVirtual": true,
+  "threadClass": "VirtualThread",
+  "message": "✅ Virtual Threads ENABLED"
 }
 ```
 
-**변경 이력**:
-- 2025-10-29: mediaMTX 스타일 paths 설정 구현, 4개 CCTV 통합
+**테스트**:
+- `GET /api/v1/test/thread-info`: Virtual Thread 확인
+- `GET /api/v1/test/blocking-test`: Thread.sleep(100) 테스트
+- 결과: 모든 요청이 Virtual Thread에서 처리됨
 
 ---
 
-### 6. 재사용 가능한 WebRTC 엔진 (Reusable WebRTC Engine)
+### 2. Off-heap 메모리 관리 (ByteBuf Extensions)
 
-**목적**: 다중 스트림을 쉽게 통합할 수 있는 독립적인 JavaScript 라이브러리
+**목적**: RTP 패킷 처리 시 GC 압력 최소화, Zero-Copy I/O
 
-**구현 위치**: `web/static/js/webrtc-engine.js`
+**구현 위치**: `src/main/kotlin/com/pluxity/mediaserver/common/ByteBufExtensions.kt`
 
 **기술적 의사결정**:
-- **결정**: 이벤트 기반 API를 가진 클래스 형태의 재사용 가능한 라이브러리
+- **결정**: Netty PooledByteBufAllocator를 사용한 Direct ByteBuf
 - **이유**:
-  - 하나의 페이지에서 여러 스트림 동시 관리 가능
-  - 깔끔한 API로 통합 간단화
-  - 자동 재연결, 통계 수집 등 공통 기능 캡슐화
-  - 다른 프로젝트에서도 재사용 가능
-- **대안**:
-  1. 각 페이지마다 WebRTC 코드 복사 (중복 코드)
-  2. 전역 함수 기반 (충돌 가능성, 상태 관리 어려움)
+  - Off-heap 메모리 사용으로 GC 압력 제거
+  - Pooling으로 할당/해제 비용 최소화
+  - Zero-Copy network I/O (Socket → ByteBuf 직접 전송)
+  - RTP 패킷(평균 1500바이트)을 매번 할당하면 GC 부하 큼
+- **Go 코드와의 비교**:
+  - Go: `[]byte` 슬라이스, 자동 GC
+  - Kotlin: Netty ByteBuf, 수동 release 필요 → `use {}` 패턴으로 안전 보장
 
 **핵심 코드**:
-```javascript
-// web/static/js/webrtc-engine.js
-class WebRTCEngine {
-    constructor(config) {
-        this.serverUrl = config.serverUrl || `ws://${window.location.host}/ws`;
-        this.streamId = config.streamId;
-        this.videoElement = config.videoElement;
-        this.autoReconnect = config.autoReconnect !== undefined ? config.autoReconnect : true;
-
-        this.eventHandlers = {
-            'connected': [],
-            'disconnected': [],
-            'error': [],
-            'stats': [],
-            'statechange': []
-        };
-    }
-
-    on(event, callback) {
-        this.eventHandlers[event].push(callback);
-        return this;
-    }
-
-    async connect() {
-        await this.connectWebSocket();
-        await this.createPeerConnection();
-        await this.createOffer();
-    }
+```kotlin
+// 자동 release 패턴
+withDirectBuffer(1500) { buffer ->
+    buffer.writeRTPHeader(
+        payloadType = 96,
+        sequenceNumber = 12345,
+        timestamp = 987654321L,
+        ssrc = 0x12345678
+    )
+    buffer.writeBytes(payload)
+    // use 블록 종료 시 자동 release
 }
+
+// RTP 헤더 파싱
+val header = buffer.readRTPHeader()
+println("Seq: ${header.sequenceNumber}, TS: ${header.timestamp}")
 ```
+
+**메모리 안전성**:
+- `use {}` 블록으로 자동 release
+- Reference Counting으로 메모리 누수 방지
+- PooledByteBufAllocator로 재사용
+
+**변경 이력**:
+- 2025-11-24: ByteBuf 확장 함수 구현, RTP 헤더 읽기/쓰기
+
+---
+
+### 3. 구조화 로깅 (Logging Extensions)
+
+**목적**: 일관된 로그 형식, 컨텍스트 정보 포함
+
+**구현 위치**: `src/main/kotlin/com/pluxity/mediaserver/common/LoggingExtensions.kt`
+
+**기술적 의사결정**:
+- **결정**: kotlin-logging + Extension Functions
+- **이유**:
+  - kotlin-logging은 lazy evaluation (람다)
+  - Extension Functions로 도메인별 로깅 함수 제공
+  - `measureTime()` inline 함수로 성능 측정
+  - Go의 zap 로거와 유사한 구조화 로깅
+- **패턴**:
+  ```kotlin
+  logger.logStreamEvent("stream123", "started", "codec: H265")
+  logger.logRTPPacket("stream123", seq=100, ts=1234567, size=1400)
+  logger.measureTime("RTSP connection") { connectToRTSP() }
+  ```
 
 **사용 예시**:
-```javascript
-// 단일 스트림
-const engine = new WebRTCEngine({
-    streamId: 'plx_cctv_01',
-    videoElement: document.getElementById('video1')
-});
+```kotlin
+private val logger = KotlinLogging.logger {}
 
-engine.on('connected', () => console.log('Connected!'));
-engine.on('stats', (stats) => console.log('Bitrate:', stats.bitrate));
-await engine.connect();
+logger.infoWithContext("Stream connected",
+    "streamId" to streamId,
+    "codec" to "H265",
+    "resolution" to "1920x1080"
+)
 
-// 다중 스트림 (대시보드)
-const engines = {};
-for (const streamId of streamIds) {
-    engines[streamId] = new WebRTCEngine({
-        streamId: streamId,
-        videoElement: document.getElementById(`video-${streamId}`)
-    });
-    await engines[streamId].connect();
+logger.measureTime("RTP packet processing") {
+    processRTPPacket(packet)
 }
 ```
 
 **변경 이력**:
-- 2025-10-29: WebRTCEngine.js 라이브러리 구현, 대시보드 통합
+- 2025-11-24: 로깅 확장 함수 구현
 
 ---
 
-### 7. 온디맨드 스트림 관리 (On-Demand Stream Management)
+### 4. 메트릭 수집 (MetricsCollector)
 
-**목적**: 필요할 때만 RTSP 연결하여 리소스 절약
+**목적**: Prometheus 메트릭 수집, 성능 모니터링
 
-**구현 위치**:
-- `cmd/server/main.go:220-269` (startOnDemandStream)
-- `internal/api/server.go:161-176` (API 엔드포인트)
+**구현 위치**: `src/main/kotlin/com/pluxity/mediaserver/common/MetricsCollector.kt`
 
 **기술적 의사결정**:
-- **결정**: Stream 객체는 서버 시작 시 생성, RTSP 클라이언트는 필요 시 생성
+- **결정**: Micrometer + Prometheus
 - **이유**:
-  - 메모리 효율: 사용하지 않는 카메라는 연결 안 함
-  - 네트워크 효율: 불필요한 RTSP 트래픽 방지
-  - 카메라 부하 감소: 시청 중인 카메라만 스트리밍
-  - 유연성: API로 수동 시작/정지 가능
-- **구현 방식**:
-  1. 서버 시작 시: 모든 paths에 대해 Stream 객체 생성
-  2. sourceOnDemand=no: RTSP 클라이언트 즉시 생성
-  3. sourceOnDemand=yes: Stream만 생성, RTSP 클라이언트는 미생성
-  4. 클라이언트 요청 시: API로 RTSP 클라이언트 생성 및 시작
+  - Spring Boot Actuator와 통합
+  - Prometheus + Grafana 표준 스택
+  - Counter, Gauge, DistributionSummary, Timer 지원
+- **메트릭 종류**:
+  - `mediaserver.streams.active`: 활성 스트림 수
+  - `mediaserver.peers.active`: 연결된 피어 수
+  - `mediaserver.stream.packets.received`: RTP 패킷 수신
+  - `mediaserver.peer.bytes.sent`: 피어 전송 바이트
+  - `mediaserver.rtsp.errors`: RTSP 에러
+  - `mediaserver.operation.duration`: 작업 실행 시간
 
-**핵심 코드**:
-```go
-// cmd/server/main.go
-func (app *Application) loadStreamsFromConfig(config *core.Config) error {
-    for streamID, pathConfig := range config.Paths {
-        // 모든 스트림에 대해 Stream 객체 생성
-        if _, err := app.streamManager.CreateStream(streamID, streamID); err != nil {
-            return err
-        }
-
-        if !pathConfig.SourceOnDemand {
-            // always-on: RTSP 클라이언트 즉시 시작
-            if err := app.startRTSPClient(streamID, pathConfig); err != nil {
-                logger.Error("Failed to start always-on stream", zap.Error(err))
-            }
-        }
-        // on-demand: RTSP 클라이언트는 나중에 생성
-    }
-    return nil
-}
-
-func (app *Application) startOnDemandStream(streamID string) error {
-    // 이미 실행 중인지 확인
-    if _, exists := app.rtspClients[streamID]; exists {
-        return nil
+**사용 예시**:
+```kotlin
+@Service
+class StreamService(
+    private val metrics: MetricsCollector
+) {
+    fun startStream(streamId: String) {
+        metrics.streamStarted(streamId)
+        // ...
     }
 
-    // Stream 객체는 이미 존재 (서버 시작 시 생성됨)
-    stream, err := app.streamManager.GetStream(streamID)
-    if err != nil {
-        return fmt.Errorf("stream not found: %w", err)
+    fun onRTPPacket(streamId: String, packet: ByteBuf) {
+        metrics.rtpPacketReceived(streamId, packet.readableBytes())
+        // ...
     }
-
-    // RTSP 클라이언트만 생성
-    pathConfig := app.config.Paths[streamID]
-    return app.startRTSPClient(streamID, pathConfig)
 }
 ```
 
-**API 엔드포인트**:
-- `POST /api/v1/streams/:id/start` - 온디맨드 스트림 시작
-- `DELETE /api/v1/streams/:id` - 스트림 정지
-- `GET /api/v1/streams` - 모든 스트림 목록 및 상태
-- `GET /api/v1/streams/:id` - 특정 스트림 정보 (코덱, 상태 등)
+**Prometheus 엔드포인트**:
+- `http://localhost:8080/actuator/prometheus`
 
 **변경 이력**:
-- 2025-10-29: 온디맨드 스트림 구현, 스트림 생성 중복 버그 수정
-
----
-
-### 8. 다중 카메라 대시보드 (Multi-Camera Dashboard)
-
-**목적**: 여러 CCTV를 한 화면에서 동시에 모니터링
-
-**구현 위치**: `web/static/dashboard.html`
-
-**기술적 의사결정**:
-- **결정**: CSS Grid 기반 반응형 레이아웃 + 자동 연결
-- **이유**:
-  - Grid: 카메라 개수에 따라 자동으로 배치
-  - 반응형: 화면 크기에 맞춰 그리드 크기 조절
-  - 자동 연결: 페이지 로드 1초 후 모든 카메라 자동 연결
-  - 개별 제어: 각 카메라별 연결/해제 가능
-- **대안**:
-  1. Flexbox (Grid보다 유연성 낮음)
-  2. 수동 연결 (사용자 불편)
-
-**핵심 코드**:
-```javascript
-// web/static/dashboard.html
-async function init() {
-    await loadStreams();
-    setupEventListeners();
-
-    // 자동 연결
-    if (streams.length > 0) {
-        console.log('Auto-connecting all cameras...');
-        setTimeout(() => {
-            connectAll();
-        }, 1000); // 1초 후 자동 연결 시작
-    }
-}
-
-async function connectCamera(streamId) {
-    const streamInfo = streams.find(s => s.id === streamId);
-
-    // 온디맨드 스트림이면 먼저 시작
-    if (streamInfo && streamInfo.onDemand && streamInfo.status === 'stopped') {
-        await fetch(`/api/v1/streams/${streamId}/start`, { method: 'POST' });
-        await new Promise(resolve => setTimeout(resolve, 1500));
-    }
-
-    // WebRTC 엔진 생성
-    const engine = new WebRTCEngine({
-        streamId: streamId,
-        videoElement: document.getElementById(`video-${streamId}`),
-        autoReconnect: true
-    });
-
-    engines[streamId] = engine;
-    await engine.connect();
-}
-```
-
-**CSS Grid 레이아웃**:
-```css
-.grid-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 20px;
-}
-```
-
-**기능**:
-- ✅ 페이지 로드 시 자동 연결
-- ✅ 각 카메라별 상태 표시 (연결 중/연결됨/오류)
-- ✅ 개별 재연결 버튼
-- ✅ 전체 연결/해제 버튼
-- ✅ 실시간 비트레이트 및 패킷 통계
-- ✅ 풀스크린 지원
-
-**변경 이력**:
-- 2025-10-29: 다중 카메라 대시보드 구현, 자동 연결 추가
+- 2025-11-24: MetricsCollector 구현
 
 ---
 
 ## 🐛 알려진 이슈 및 제약사항
 
-### 해결된 이슈 (과거)
-
-1. **RTP 패킷 미수신** ✅ 해결됨
-   - 원인: gortsplib v4에서 OnPacketRTP deprecated
-   - 해결: OnPacketRTPAny 사용
-
-2. **ICE 연결 실패** ✅ 해결됨
-   - 원인: Answer SDP에 ICE candidates 미포함
-   - 해결: GatheringCompletePromise 사용
-
-3. **코덱 불일치로 영상 안 나옴** ✅ 해결됨
-   - 원인: 카메라 H.265, 서버 H.264만 전송
-   - 해결: 동적 코덱 선택 구현
-
-4. **구독자 정리 문제** ✅ 해결됨
-   - 원인: 피어 종료 후 스트림에 남아있음
-   - 해결: OnPeerClosed 콜백 체인 구현
-
-5. **클라이언트 ID 중복 (심각한 버그)** ✅ 해결됨 (2025-10-29)
-   - 원인: randomString() 함수가 매번 동일한 문자열 "abcdefgh" 생성
-   - 증상:
-     - 모든 클라이언트가 동일한 ID "client-abcdefgh"
-     - WebSocket 메시지 라우팅 실패
-     - 테스트에서 Answer 메시지 미수신
-     - 클라이언트가 ICE state "new"에서 멈춤
-   - 해결:
-     - math/rand 패키지 import
-     - randomString()을 진짜 랜덤하게 수정: `rng.Intn(len(letters))`
-     - 클라이언트 생성 시 ID를 한 번만 생성하도록 수정 (logger 중복 생성 버그 수정)
-   - 파일: `internal/signaling/server.go:3-12, 74-81, 281-290`
-   - 검증: E2E 테스트에서 서로 다른 클라이언트 ID 확인 (client-6hara0rp, client-mh3iitjg 등)
-
-6. **뮤텍스 데드락으로 연속 테스트 실패** ✅ 해결됨 (2025-10-29)
-   - 원인 1: `webrtc.Manager.CreatePeer()`에서 Lock 획득 후 OnClose 콜백이 `RemovePeer()`를 동기 호출하면 데드락
-   - 원인 2: `peer.Close()`가 여러 곳에서 호출되어 onClose 콜백이 중복 실행
-   - 증상:
-     - 첫 번째 E2E 테스트 성공
-     - 두 번째 테스트가 "Handling WebRTC offer" 로그 후 25초 타임아웃
-     - handleWebRTCOffer()가 CreatePeer()에서 블로킹
-   - 해결:
-     - **고루틴 비동기 실행**: OnClose 콜백을 `go func()` 으로 감싸서 데드락 방지
-     - **sync.Once 보호**: `peer.Close()`에 `closeOnce.Do()` 추가하여 중복 실행 방지
-   - 파일:
-     - `internal/webrtc/manager.go:55-65` (고루틴 추가)
-     - `internal/webrtc/peer.go:27, 389-407` (sync.Once 추가)
-   - 검증:
-     - `TestVideoStreaming`: PASS (10.56s, 101 packets)
-     - `TestMultipleClients`: PASS (9.56s, 3 clients × 102 packets)
-     - 연속 실행 총 20.2초 소요, 데드락 없음
-
-7. **온디맨드 스트림 생성 중복 버그** ✅ 해결됨 (2025-10-29)
-   - 원인: `startOnDemandStream()`에서 `addStream()`을 호출하여 이미 존재하는 Stream 객체를 다시 생성 시도
-   - 증상:
-     - `POST /api/v1/streams/:id/start` 호출 시 "stream already exists" 에러
-     - 온디맨드 스트림 시작 불가능
-   - 해결:
-     - Stream 객체는 서버 시작 시 한 번만 생성 (loadStreamsFromConfig)
-     - `startOnDemandStream()`에서는 RTSP 클라이언트만 생성
-     - 기존 Stream 객체를 GetStream()으로 가져와서 재사용
-   - 파일: `cmd/server/main.go:220-269`
-   - 검증: 온디맨드 스트림 정상 시작, 여러 번 호출해도 에러 없음
-
-8. **RTSP 인증 URL 인코딩 문제** ✅ 해결됨 (2025-10-29)
-   - 원인: 비밀번호에 특수문자(!@#)가 포함되어 RTSP URL이 잘못 파싱됨
-   - 증상:
-     - plx_cctv_03: 401 Unauthorized 에러
-     - 서버 로그: "bad status code: 401 (Unauthorized)"
-     - 프론트엔드: 코덱 "알 수 없음" 표시
-   - 해결:
-     - config.yaml에서 특수문자 URL 인코딩
-     - `!` → `%21`, `@` → `%40`, `#` → `%23`
-     - plx_cctv_02, plx_cctv_03 비밀번호 모두 수정
-   - 파일: `configs/config.yaml:18, 22`
-   - 검증: 모든 카메라 정상 인증, 코덱 정보 표시됨
-
-9. **대시보드 수동 연결 문제** ✅ 해결됨 (2025-10-29)
-   - 원인: 대시보드 페이지 로드 후 "모두 연결" 버튼을 수동으로 클릭해야 함
-   - 증상:
-     - 사용자가 매번 버튼 클릭 필요
-     - 자동 모니터링 시스템으로 사용 불편
-   - 해결:
-     - `init()` 함수에서 페이지 로드 1초 후 자동으로 `connectAll()` 호출
-     - setTimeout으로 DOM 렌더링 완료 대기
-   - 파일: `web/static/dashboard.html:566-575`
-   - 검증: 페이지 열면 자동으로 모든 카메라 연결
-
 ### 현재 이슈
 
-없음 - 모든 알려진 이슈가 해결되었습니다! ✅
+1. **StreamFlow/StreamManager 단위 테스트 타이밍 이슈**:
+   - 문제: `runTest` TestDispatcher와 `Flow.collect` 무한 루프 간의 동기화 문제
+   - 원인: `collect`는 무한 루프이므로 `advanceUntilIdle()`이 작동하지 않음
+   - 현재 상태: RTPPacket 테스트는 통과, Stream 테스트는 보류
+   - 해결 계획: Phase 2 Week 5-6에서 실제 환경 통합 테스트로 검증
 
 ### 기술적 부채
 
-1. **에러 핸들링 부족**: 일부 에러가 로그만 남기고 처리 안 됨
-   - 해결 계획: 에러 타입별 재시도 로직, 알림 시스템 추가
+1. **WebRTC 라이브러리 미선택**:
+   - 후보: Kurento, webrtc-java, 직접 구현
+   - 해결 계획: Phase 4에서 평가 후 결정
 
-2. **테스트 커버리지 낮음**: E2E 테스트만 존재, 유닛 테스트 없음
-   - 해결 계획: 주요 컴포넌트별 유닛 테스트 추가
+2. **HLS 지원 미구현**:
+   - 현재: WebRTC만 지원
+   - 해결 계획: Phase 5에서 HLS Muxer 추가
 
-3. **WebRTCEngine.js 테스트 없음**: 프론트엔드 라이브러리에 대한 자동화 테스트 부재
-   - 해결 계획: Jest 또는 Playwright 기반 E2E 테스트 추가
+3. **테스트 커버리지 낮음**:
+   - 현재: Common 모듈만 테스트
+   - 해결 계획: 각 Phase에서 통합 테스트 추가
+
+4. **ZGC 설정**:
+   - `bootRun`에는 ZGC 미적용
+   - 해결: `./gradlew runWithZGC` 또는 JAR 직접 실행
 
 ### 제약사항
 
-1. **브라우저 H.265 지원**: Firefox는 H.265를 지원하지 않음
-   - 해결: 서버가 자동으로 H.264를 선택하도록 구현 완료
+1. **Java 21 필수**:
+   - Virtual Threads 사용
+   - Generational ZGC 사용
+   - 개발 환경: `C:\Program Files\Java\jdk-21`
 
-2. **네트워크 환경**: 복잡한 NAT 환경에서 STUN/TURN 서버 필요
-   - 현재: 로컬 네트워크에서만 테스트됨
-   - 향후: TURN 서버 설정 추가 필요
+2. **브라우저 H.265 지원**:
+   - Chrome/Edge: H.265 지원
+   - Firefox: H.264만 지원
+   - 해결: 동적 코덱 선택 (Go 코드와 동일)
 
-3. **카메라 코덱**: 카메라가 H.265/H.264를 지원해야 함
-   - 현재: 테스트 카메라는 H.265 지원 확인
+3. **네트워크 환경**:
+   - STUN/TURN 서버 필요 (NAT 환경)
+   - 현재: Google STUN 서버 사용
 
 ---
 
 ## 📚 참조 문서
 
-### 내부 문서
-- [README.md](./README.md) - 프로젝트 소개 및 사용 가이드
-- [configs/config.yaml](./configs/config.yaml) - 설정 파일 예시
-- [CLAUDE.md](./CLAUDE.md) - 프로젝트 살아있는 문서 (현재 파일)
+### 내부 문서 (이 프로젝트)
+- [README_KOTLIN.md](./README_KOTLIN.md) - Kotlin 프로젝트 소개 및 빠른 시작
+- [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) - 22주 상세 로드맵
+- [docs/MIGRATION_STRATEGY.md](./docs/MIGRATION_STRATEGY.md) - 3단계 최적화 전략
+- [docs/KOTLIN_MIGRATION_PLAN.md](./docs/KOTLIN_MIGRATION_PLAN.md) - Kotlin 마이그레이션 계획
+- [docs/KOTLIN_PRODUCTION_GUIDE.md](./docs/KOTLIN_PRODUCTION_GUIDE.md) - ZGC, Panama, Off-heap 가이드
+- [docs/KTOR_VS_SPRING_ANALYSIS.md](./docs/KTOR_VS_SPRING_ANALYSIS.md) - 프레임워크 선택 분석
+- [docs/DEPENDENCIES.md](./docs/DEPENDENCIES.md) - Go 의존성 분석
+- [CLAUDE.md](./CLAUDE.md) - 현재 문서 (프로젝트 SSOT)
 
-### Skills (재사용 가능한 지식)
-- [.claude/skills/rtsp-webrtc-streaming.md](./.claude/skills/rtsp-webrtc-streaming.md) - RTSP to WebRTC 스트리밍 시스템 종합 가이드
-- [.claude/skills/README.md](./.claude/skills/README.md) - Skill 관리 가이드
-
-**Skills vs CLAUDE.md**:
-- **CLAUDE.md**: 현재 프로젝트(cctv3)의 구체적인 상태, 의사결정, 진행 상황
-- **Skills**: 일반화된 패턴과 재사용 가능한 지식, 다른 프로젝트에도 적용 가능
-
-**Skills 활용**:
-```
-"RTSP to WebRTC 시스템을 새로 만들어야 해.
-.claude/skills/rtsp-webrtc-streaming.md를 참고해서 설계해줘."
-```
+### Go 레거시 참조
+- [go-legacy/README.md](./go-legacy/README.md) - 기존 Go 프로젝트 문서
+- Go 소스 코드는 `go-legacy/` 디렉토리에 참조용으로 보관
 
 ### 외부 리소스
 
-**핵심 라이브러리**:
-- [pion/webrtc](https://github.com/pion/webrtc) - WebRTC 구현 가이드
-- [bluenviron/gortsplib](https://github.com/bluenviron/gortsplib) - RTSP 사용법
-- [mediaMTX](https://github.com/bluenviron/mediamtx) - 참조 아키텍처
+**Kotlin/Spring**:
+- [Kotlin 공식 문서](https://kotlinlang.org/docs/home.html)
+- [Spring Boot 3.2 문서](https://docs.spring.io/spring-boot/docs/3.2.0/reference/html/)
+- [Kotlin Coroutines 가이드](https://kotlinlang.org/docs/coroutines-guide.html)
 
-**표준 및 프로토콜**:
-- [WebRTC 표준](https://webrtc.org/)
-- [RTSP RFC 2326](https://tools.ietf.org/html/rfc2326)
-- [RTP RFC 3550](https://tools.ietf.org/html/rfc3550)
+**Java 21**:
+- [Virtual Threads (JEP 444)](https://openjdk.org/jeps/444)
+- [Generational ZGC (JEP 439)](https://openjdk.org/jeps/439)
 
-**학습 리소스**:
-- [Effective Go](https://go.dev/doc/effective_go)
-- [Go Concurrency Patterns](https://go.dev/blog/pipelines)
+**미디어 처리**:
+- [JavaCV](https://github.com/bytedeco/javacv)
+- [Netty](https://netty.io/)
+- [FFmpeg](https://ffmpeg.org/)
+
+**Go 참조 (레거시)**:
+- [pion/webrtc](https://github.com/pion/webrtc)
+- [bluenviron/gortsplib](https://github.com/bluenviron/gortsplib)
+- [mediaMTX](https://github.com/bluenviron/mediamtx)
 
 ---
 
@@ -790,26 +562,28 @@ async function connectCamera(streamId) {
 
 1. **기능 추가 시**:
    ```
-   "다중 카메라 지원 기능을 추가하고 싶어. 현재 코드 구조를 유지하면서
-   어떻게 구현하면 좋을까?"
+   "StreamManager를 Kotlin Flow 기반으로 구현하고 싶어.
+   IMPLEMENTATION_PLAN.md의 Phase 2 Week 3-4를 참고해서
+   Go 코드(go-legacy/internal/core/stream_manager.go)를 마이그레이션해줘."
    ```
 
 2. **문제 해결 시**:
    ```
-   "E2E 테스트가 연속 실행하면 실패해. 로그를 보면 [로그 내용].
-   원인과 해결 방법을 제시해줘."
+   "ByteBuf가 release되지 않아서 메모리 누수가 발생해.
+   로그: [로그 내용]. 원인과 해결 방법을 제시해줘."
    ```
 
 3. **코드 리뷰 시**:
    ```
-   "@internal/webrtc/peer.go 파일의 코드를 리뷰하고
-   개선 사항을 제안해줘."
+   "@src/main/kotlin/com/pluxity/mediaserver/common/ 디렉토리의
+   코드를 리뷰하고 Kotlin best practices 관점에서 개선사항을 제안해줘."
    ```
 
 ### 작업 프로세스
 
 1. **새 기능 개발**:
    - CLAUDE.md에서 현재 상태 확인
+   - IMPLEMENTATION_PLAN.md에서 해당 Phase 확인
    - 기능 요구사항 설명
    - 설계 제안 받기
    - 구현 후 CLAUDE.md 업데이트
@@ -821,74 +595,37 @@ async function connectCamera(streamId) {
    - "알려진 이슈" 섹션 업데이트
 
 3. **테스트**:
-   - `go test -v ./test/e2e/stream_test.go -run [테스트명]`
-   - 실패 시 로그 분석
-   - 수정 후 재테스트
+   - `./gradlew test` (단위 테스트)
+   - `./gradlew integrationTest` (통합 테스트)
+   - 실패 시 로그 분석 및 수정
 
 ### 서브 에이전트 활용
 
-- **Explore Agent**: 코드베이스 탐색 시 사용
+- **Explore Agent**: 코드베이스 탐색, Go 레거시 코드 분석
 - **Plan Agent**: 복잡한 기능 설계 시 사용
-
-### Skills 관리 (재사용 가능한 지식)
-
-**Skills는 CLAUDE.md처럼 Living Document입니다.**
-
-#### Skills 생성 (Create)
-```
-"새로운 패턴이나 해결책을 발견했어.
-.claude/skills/에 [skill-name].md로 저장하고
-README.md에도 추가해줘."
-```
-
-#### Skills 읽기 (Read)
-```
-"RTSP to WebRTC 관련 패턴을 참고하고 싶어.
-.claude/skills/rtsp-webrtc-streaming.md를 보여줘."
-```
-
-#### Skills 업데이트 (Update)
-```
-"ICE 연결 처리 패턴이 개선되었어.
-rtsp-webrtc-streaming.md의 ICE 섹션을 업데이트하고
-Maintenance Log에도 기록해줘."
-```
-
-#### Skills 삭제 (Delete)
-```
-"[skill-name].md가 더 이상 유용하지 않아.
-삭제하고 README.md에서도 제거해줘."
-```
-
-**Best Practice**:
-- 프로젝트에서 중요한 패턴 발견 시 즉시 Skill로 저장
-- 버그 해결 시 트러블슈팅 섹션에 추가
-- 다른 프로젝트에도 적용 가능하도록 일반화
-- CLAUDE.md는 현재 프로젝트, Skills는 재사용 가능한 지식
 
 ---
 
 ## 📊 성공 지표
 
 ### 프로젝트 성공 기준
-- ✅ 실시간 RTSP → WebRTC 스트리밍 성공
-- ✅ 브라우저 호환성 (Chrome, Edge, Firefox)
-- ✅ 지연시간 < 1초
-- ✅ 자동화된 테스트 (E2E)
-- ✅ **다중 스트림 지원 (4개 CCTV 통합)** ⭐
-- ✅ **mediaMTX 스타일 설정 시스템** ⭐
-- ✅ **재사용 가능한 WebRTC 라이브러리** ⭐
-- ✅ **다중 카메라 대시보드** ⭐
-- ✅ **온디맨드 스트림 관리** ⭐
-- 🔶 다중 클라이언트 부하 테스트 (계획 중)
-- 🔶 녹화 기능 (계획 중)
+- ✅ Kotlin + Spring Boot 프로젝트 구조 생성
+- ✅ Java 21 + Virtual Threads 환경 구축
+- ✅ 공통 인프라 모듈 완성 (Logging, Exceptions, Metrics, ByteBuf)
+- ✅ StreamManager 구현 (Flow 기반 Pub/Sub) - RTPPacket, StreamFlow, StreamManager
+- ✅ Netty ByteBuf 사용 검증 (Tomcat 환경 호환성 확인)
+- 🔶 RTSP Client 구현 (JavaCV + Virtual Threads)
+- 🔶 WebRTC Peer 구현 (Coroutines)
+- 🔶 E2E 테스트 (실제 CCTV 카메라)
+- 🔶 브라우저 호환성 (Chrome, Edge, Firefox)
+- 🔶 지연시간 < 1초
+- 🔶 Go 대비 성능: 처리량 ≥ 100%, P99 레이턴시 < 3ms (ZGC)
 
 ### 코드 품질 지표
-- 테스트 커버리지: 현재 ~10% (E2E만) / 목표 60%+
+- 테스트 커버리지: 현재 Common 모듈만 / 목표 60%+
 - 알려진 버그: 0개 (치명적 버그)
-- 기술 부채: 낮음 (주요 구조 완성)
-- 프론트엔드 라이브러리: 재사용 가능한 WebRTCEngine.js
-- 실제 배포: 4개 실제 CCTV 카메라 연동 성공
+- 기술 부채: 낮음 (주요 인프라 완성)
+- 코드 스타일: Kotlin 공식 가이드 준수
 
 ---
 
@@ -897,43 +634,51 @@ Maintenance Log에도 기록해줘."
 ### 빌드 프로세스
 ```bash
 # 개발 빌드
-go build -o bin/media-server.exe cmd/server/main.go
+./gradlew build
 
-# 프로덕션 빌드 (최적화)
-go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
+# 프로덕션 빌드 (테스트 포함)
+./gradlew clean build
+
+# 테스트 제외 빌드
+./gradlew build -x test
+
+# JAR 생성
+./gradlew bootJar
+# 결과: build/libs/media-server-0.1.0-SNAPSHOT.jar
 ```
 
 ### 실행
 ```bash
 # 기본 실행
-./bin/media-server.exe
+./gradlew bootRun
 
-# 설정 파일 지정
-./bin/media-server.exe -config=configs/config.yaml
+# ZGC 활성화 실행 (권장)
+./gradlew runWithZGC
 
-# 버전 확인
-./bin/media-server.exe -version
+# JAR 직접 실행 (프로덕션)
+java -XX:+UseZGC -XX:+ZGenerational \
+     -Xms2g -Xmx4g \
+     -XX:MaxDirectMemorySize=2g \
+     -XX:+AlwaysPreTouch \
+     -jar build/libs/media-server-0.1.0-SNAPSHOT.jar
 ```
 
 ### 모니터링
-- **로그 위치**:
-  - 콘솔 출력 (stdout) - 서버 시작 시 로그 경로 표시
-  - 파일 로그 (logs/media-server-YYYY-MM-DD.log)
-  - **날짜별 자동 로그 파일 생성** ⭐
-  - 도커: `/app/logs/media-server-YYYY-MM-DD.log` → 호스트: `./log/media/media-server-YYYY-MM-DD.log`
-- **로그 레벨**: configs/config.yaml에서 설정
-- **로그 로테이션 설정**:
-  - 날짜별 파일 생성: media-server-2025-11-17.log 형식
-  - 매일 자정 자동 로테이션 (새 파일 생성)
-  - max_size: 500MB (단일 파일 크기 제한, 초과 시 백업)
-  - max_backups: 15 (보관할 백업 파일 수)
-  - max_age: 15일 (보관 기간)
-  - 자동 압축: 활성화 (구 로그 파일 gzip 압축)
-- **주요 메트릭**:
-  - 활성 스트림 수
-  - 연결된 피어 수
-  - RTP 패킷 수신률
-  - ICE 연결 상태
+- **헬스 체크**: http://localhost:8080/api/v1/health
+- **Actuator**: http://localhost:8080/actuator/health
+- **Prometheus 메트릭**: http://localhost:8080/actuator/prometheus
+- **Virtual Threads 확인**: http://localhost:8080/api/v1/test/thread-info
+
+**로그 위치**:
+- 콘솔 출력 (stdout)
+- 파일 로그: `logs/media-server.log` (최대 500MB, 15일 보관)
+
+**주요 메트릭**:
+- `mediaserver.streams.active`: 활성 스트림 수
+- `mediaserver.peers.active`: 연결된 피어 수
+- `mediaserver.stream.packets.received`: RTP 패킷 수신률
+- `mediaserver.peer.bytes.sent`: 피어 전송 바이트
+- JVM 메트릭: Heap, GC, Thread
 
 ---
 
@@ -941,100 +686,61 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 
 ### ⚠️ 개발 시 주의사항
 
-1. **의존성 버전**: pion/webrtc v4, gortsplib v4 반드시 사용
-   - v3와 v4 API가 크게 다름 (OnPacketRTPAny 등)
+1. **의존성 버전**:
+   - Java 21 필수 (Virtual Threads)
+   - Spring Boot 3.2.0 (Virtual Threads 지원)
+   - Kotlin 1.9.21, Coroutines 1.8.0
 
-2. **동시성 제어**:
-   - Stream, Peer 접근 시 mutex 사용
-   - 고루틴에서 안전한 로거 사용
+2. **메모리 관리**:
+   - ByteBuf는 반드시 release (use {} 패턴 사용)
+   - Off-heap Direct Memory 누수 주의
+   - `-XX:MaxDirectMemorySize=2g` 설정
 
-3. **리소스 정리**:
-   - 피어 종료 시 반드시 Unsubscribe 호출
-   - 컨텍스트 취소 시 고루틴 정리 확인
+3. **동시성 처리**:
+   - Blocking I/O: Virtual Threads 사용
+   - 비동기 작업: Coroutines 사용
+   - Flow: 스트림 데이터 처리
 
 4. **테스트**:
-   - E2E 테스트 실행 전 서버 재시작
-   - 테스트 간 충분한 정리 시간 확보
+   - 단위 테스트: `@Test`, MockK
+   - 통합 테스트: `@SpringBootTest`
+   - Java 21 환경 필수
 
 ### 💡 Best Practices
 
-1. **에러 처리**: 항상 fmt.Errorf with %w 사용
-2. **로깅**: 구조화 로깅 (zap.String, zap.Int 등) 사용
-3. **설정**: 하드코딩 금지, config.yaml 사용
-4. **문서화**: 주요 의사결정은 CLAUDE.md에 기록
+1. **예외 처리**: sealed class MediaServerException 사용
+2. **로깅**: kotlin-logging extension functions 사용
+3. **설정**: application.yaml, @ConfigurationProperties
+4. **리소스 정리**: use {} 블록 활용
+5. **메트릭**: MetricsCollector 주입 후 사용
+6. **타입 안전성**: data class, sealed class 활용
 
 ---
 
 ## 🔄 버전 히스토리
 
-### v0.1.0 (2025-10-29)
-- ✅ RTSP to WebRTC 기본 기능 완성
-- ✅ 동적 코덱 선택 구현
-- ✅ ICE 연결 문제 해결
-- ✅ 구독자 정리 로직 구현
-- ✅ E2E 자동화 테스트 추가
-- ✅ 실제 IP 카메라 스트리밍 성공
+### v0.1.0-SNAPSHOT (2025-11-24) - Initial Migration
+- ✅ **프로젝트 초기화**: Go → Kotlin 마이그레이션 시작
+- ✅ **Phase 1 Week 1 완료**: 프로젝트 구조 생성
+  - Spring Boot 3.2.0 + Kotlin 1.9.21
+  - Java 21 + Virtual Threads 설정
+  - Gradle 8.5 (Kotlin DSL)
+- ✅ **Phase 1 Week 2 완료**: 공통 인프라
+  - LoggingExtensions, Exceptions, MetricsCollector, ByteBufExtensions
+  - 단위 테스트 작성 및 통과
+- ✅ **Virtual Threads 검증**:
+  - VirtualThreadTestController 작성
+  - `isVirtual: true` 확인
+  - Tomcat + Virtual Threads 정상 작동
+- ✅ **Phase 2 Week 3-4 완료**: Stream Domain 구현
+  - RTPPacket.kt (Netty ByteBuf 기반, 11개 테스트 통과)
+  - StreamFlow.kt (Kotlin Flow Pub/Sub)
+  - StreamManager.kt (ConcurrentHashMap 기반)
+  - Netty ByteBuf 분석: Tomcat 환경 호환성 확인
 
-### v0.2.0 (2025-10-29) - mediaMTX Edition
-- ✅ **mediaMTX 스타일 paths 설정 시스템** ⭐
-- ✅ **재사용 가능한 WebRTCEngine.js 라이브러리** ⭐
-- ✅ 단일 스트림 뷰어 페이지 (viewer.html)
-- ✅ 다중 카메라 대시보드 (dashboard.html)
-- ✅ 온디맨드 스트림 관리 (sourceOnDemand)
-- ✅ 스트림 관리 REST API
-- ✅ 4개 실제 CCTV 카메라 통합
-- ✅ RTSP 인증 URL 인코딩 처리
-- ✅ 대시보드 자동 연결 기능
-- ✅ 버그 수정: 스트림 생성 중복, URL 인코딩, 자동 연결
-
-**주요 개선사항**:
-- 23개 파일 수정, 4,958 줄 추가
-- 완전한 다중 카메라 지원
-- 사용자 친화적인 프론트엔드
-- 프로덕션 레벨 기능
-
-### v0.2.1 (2025-11-17) - AIOT Integration & Log Rotation
-- ✅ **AIOT API 연동을 통한 동적 CCTV 스트림 관리** ⭐
-  - 외부 API에서 CCTV 목록 자동 동기화
-  - 수동 동기화 API 엔드포인트 (POST /api/v1/sync)
-  - 주기적 동기화 제거 (요청 시에만 동기화)
-- ✅ **날짜별 로그 로테이션** ⭐
-  - 날짜별 파일 생성: media-server-2025-11-17.log 형식
-  - 매일 자정 자동 로테이션 (새 파일 생성)
-  - 파일 크기 제한 (max_size: 100MB)
-  - 백업 파일 관리 (max_backups: 3)
-  - 보관 기간 설정 (max_age: 7일)
-  - 자동 압축 활성화 (구 로그 파일 gzip)
-- ✅ **코드 리팩토링 및 개선**
-  - 초기화 순서 버그 수정 (StreamManager nil 문제)
-  - RTSP 클라이언트 생성 로직 헬퍼 메서드로 추출
-  - CCTVManager 인터페이스 정의 (internal/cctv/interface.go)
-  - 매직 넘버 제거 및 설정화
-  - URL 마스킹 보안 개선
-- ✅ **HTML 클라이언트 통합**
-  - 모든 HTML 파일이 `/v3/config/paths/list` API 사용
-  - 일관된 응답 데이터 처리 (data.items, stream.name)
-- ✅ **문서 정리**
-  - 중복/불필요 md 파일 삭제 (10개 파일)
-  - 통합 API 문서 작성 (docs/API.md, 600+ 줄)
-
-**변경된 파일**:
-- cmd/server/main.go - 초기화 순서, RTSP 헬퍼 메서드
-- internal/core/config.go - SyncIntervalSec 제거
-- internal/cctv/manager.go - ManualSync() 추가
-- internal/cctv/interface.go - Provider 인터페이스 정의
-- internal/client/api_client.go - SetRequestTimeout()
-- internal/api/server.go - POST /api/v1/sync 엔드포인트
-- pkg/logger/logger.go - lumberjack 로그 로테이션
-- web/static/viewer.html - API 엔드포인트 통합
-- web/static/test-multi-stream.html - API 엔드포인트 통합
-
-### 다음 버전 (v0.3.0) 계획
-- 성능 최적화 및 지연시간 측정
-- 다중 클라이언트 부하 테스트
-- 유닛 테스트 추가
-- 녹화 기능
-- PTZ 카메라 제어
+**다음 버전 (v0.2.0) 계획**:
+- Phase 2 Week 5-6: 통합 테스트 (StreamFlow/StreamManager 실제 환경 검증)
+- Phase 3: RTSP Client 구현 (JavaCV + Virtual Threads)
 
 ---
 
@@ -1042,55 +748,47 @@ go build -ldflags="-s -w" -o bin/media-server cmd/server/main.go
 
 ### 개발 중 발견한 팁
 
-1. **gortsplib v4 사용 시**: 반드시 OnPacketRTPAny 사용
-2. **ICE 문제 디버깅**: 브라우저 콘솔에서 "ICE connection state" 로그 확인
-3. **코덱 문제**: 서버 로그에서 "Media format detected" 확인
-4. **구독자 정리**: "Subscriber removed" 로그로 정상 동작 확인
-5. **RTSP 비밀번호 특수문자**: URL 인코딩 필수 (!→%21, @→%40, #→%23)
-6. **온디맨드 스트림**: Stream 객체와 RTSP 클라이언트 생명주기 분리
-7. **대시보드 자동 연결**: setTimeout 1초로 DOM 렌더링 완료 대기
-8. **WebRTCEngine.js**: 다중 인스턴스 생성 가능, videoElement는 각각 독립적
-9. **로그 로테이션**: 날짜별 자동 파일 생성 (media-server-2025-11-17.log), 매일 자정 자동 로테이션
-10. **AIOT API 동기화**: 수동 동기화만 지원 (POST /api/v1/sync), 주기적 동기화 안 함
-11. **로그 파일명 형식**: `logs/media-server-YYYY-MM-DD.log` (날짜 포함)
-12. **로그 경로 표시**: 서버 시작 시 콘솔에 로그 파일 절대 경로 출력
+1. **Virtual Threads 활성화**: `spring.threads.virtual.enabled: true`
+2. **ByteBuf 메모리 누수 방지**: `use {}` 블록 필수
+3. **Kotlin Map<String, Any> 타입 이슈**: 명시적 타입 파라미터 `mapOf<String, Any>()`
+4. **Java 21 환경변수**: `export JAVA_HOME="C:\Program Files\Java\jdk-21"`
+5. **Gradle Daemon 재시작**: Java 버전 변경 시 `./gradlew --stop`
+6. **ZGC 적용**: `bootRun`이 아닌 `runWithZGC` 또는 JAR 직접 실행
+7. **Netty 의존성**: `netty-all` 대신 개별 모듈 사용 (native 라이브러리 이슈 방지)
 
-### 웹 페이지 접속 URL
+### 웹 페이지 접속 URL (미구현)
 
-**프로덕션 사용**:
-- 대시보드 (권장): http://localhost:8080/static/dashboard.html
+**프로덕션 사용** (예정):
+- 대시보드: http://localhost:8080/static/dashboard.html
 - 단일 뷰어: http://localhost:8080/static/viewer.html
-- 원본 데모: http://localhost:8080/
 
-**API 엔드포인트**:
-- GET /v3/config/paths/list - 스트림 목록 (mediaMTX 호환)
-- GET /api/v1/streams - 스트림 목록 (레거시)
-- GET /api/v1/streams/:id - 스트림 정보
-- POST /api/v1/streams/:id/start - 온디맨드 시작
-- DELETE /api/v1/streams/:id - 스트림 정지
-- POST /api/v1/sync - CCTV 목록 수동 동기화 (AIOT API)
+**API 엔드포인트** (현재):
 - GET /api/v1/health - 헬스 체크
+- GET /actuator/health - Actuator 헬스
+- GET /actuator/prometheus - 메트릭
+- GET /api/v1/test/thread-info - Virtual Threads 확인
+- GET /api/v1/test/blocking-test - Blocking 테스트
 
-### 실제 배포 카메라 정보
+### Go 레거시 참조 경로
 
-| 카메라 ID | 위치 | 코덱 | 타입 | 상태 |
-|----------|-----|------|-----|------|
-| plx_cctv_01 | 192.168.4.121 | H265 | Always-on | ✅ 작동 |
-| plx_cctv_02 | 192.168.4.54 | H264 | On-demand | ✅ 작동 |
-| plx_cctv_03 | 192.168.4.46 | H265 | On-demand | ✅ 작동 |
-| park_cctv_01 | 121.190.36.211 | - | On-demand | ⚠️ 외부망 |
+중요한 Go 파일들:
+- `go-legacy/internal/core/stream_manager.go` - StreamManager 참조
+- `go-legacy/internal/rtsp/client.go` - RTSP Client 참조
+- `go-legacy/internal/webrtc/peer.go` - WebRTC Peer 참조
+- `go-legacy/cmd/server/main.go` - 메인 로직 참조
 
 ### 다음 세션 시작 시
 
-1. README.md와 CLAUDE.md 먼저 읽기
-2. 서버 실행 상태 확인 (포트 8080)
-3. 최근 변경사항 git log 확인
-4. 대시보드 접속하여 정상 동작 확인: http://localhost:8080/static/dashboard.html
-5. 모든 카메라 자동 연결 확인
+1. CLAUDE.md와 README_KOTLIN.md 먼저 읽기
+2. IMPLEMENTATION_PLAN.md에서 현재 Phase 확인
+3. `./gradlew clean build` 실행하여 빌드 상태 확인
+4. `./gradlew test` 실행하여 테스트 통과 확인
+5. Java 21 환경변수 설정 확인: `java -version`
+6. Phase 2 Week 3-4 시작: StreamManager 구현
 
 ---
 
-**마지막 업데이트**: 2025-11-17
-**현재 버전**: v0.2.1 (AIOT Integration & Log Rotation)
-**프로젝트 상태**: Phase 7 완료 - AIOT API 연동 및 로그 로테이션 구현 ✅
-**다음 마일스톤**: Phase 8 - 성능 최적화 및 부하 테스트
+**마지막 업데이트**: 2025-11-24
+**현재 버전**: v0.1.0-SNAPSHOT
+**프로젝트 상태**: Phase 1 완료 (Week 1-2) ✅, Phase 2 준비 중
+**다음 마일스톤**: Phase 2 Week 3-4 - StreamManager 구현 (Kotlin Flow)
